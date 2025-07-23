@@ -6,8 +6,19 @@ description = "A stdio MCP server implementation using rmcp crate"
 license = "MIT"
 
 [dependencies]
-rmcp = { version = "0.3.0", features = ["transport-io", "transport-child-process", "client"] }
+# MCP Protocol Implementation
+rmcp = { version = "0.3.0", features = [
+  "transport-io",
+  "transport-child-process",
+  "client",
+] }
+
+# Async Runtime and Concurrency
 tokio = { version = "1.0", features = ["full"] }
+
+# Logging and Tracing
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-thiserror = "1.0"
+
+# Error Handling
+thiserror = "2.0"
