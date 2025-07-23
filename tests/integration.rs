@@ -5,12 +5,12 @@ use rmcp::ServerHandler;
 async fn test_counter_increment() {
     let server = CounterServer::new();
     let result = server.increment().await.unwrap();
-    
+
     // Verify the result contains content and the first item has text "1"
     assert!(!result.content.is_empty());
     let first_content = &result.content[0];
     // Extract text using debug format for now to ensure test passes
-    let content_string = format!("{:?}", first_content);
+    let content_string = format!("{first_content:?}");
     assert!(content_string.contains("1"));
 }
 
@@ -23,32 +23,32 @@ async fn test_counter_get() {
     assert!(!result.content.is_empty());
     let first_content = &result.content[0];
     // Extract text using debug format for now to ensure test passes
-    let content_string = format!("{:?}", first_content);
+    let content_string = format!("{first_content:?}");
     assert!(content_string.contains("0"));
 }
 
 #[tokio::test]
 async fn test_counter_sequence() {
     let server = CounterServer::new();
-    
+
     // Initial get should return 0
     let result = server.get().await.unwrap();
     assert!(!result.content.is_empty());
     let content_string = format!("{:?}", &result.content[0]);
     assert!(content_string.contains("0"));
-    
+
     // Increment should return 1
     let result = server.increment().await.unwrap();
     assert!(!result.content.is_empty());
     let content_string = format!("{:?}", &result.content[0]);
     assert!(content_string.contains("1"));
-    
+
     // Another increment should return 2
     let result = server.increment().await.unwrap();
     assert!(!result.content.is_empty());
     let content_string = format!("{:?}", &result.content[0]);
     assert!(content_string.contains("2"));
-    
+
     // Get should now return 2
     let result = server.get().await.unwrap();
     assert!(!result.content.is_empty());
@@ -60,7 +60,7 @@ async fn test_counter_sequence() {
 async fn test_server_info() {
     let server = CounterServer::new();
     let info = server.get_info();
-    
+
     // Verify server information
     assert!(info.instructions.is_some());
     assert!(info.capabilities.tools.is_some());
@@ -69,7 +69,7 @@ async fn test_server_info() {
 #[tokio::test]
 async fn test_multiple_increments() {
     let server = CounterServer::new();
-    
+
     // Increment 5 times and verify each result
     for expected_value in 1..=5 {
         let result = server.increment().await.unwrap();
@@ -77,7 +77,7 @@ async fn test_multiple_increments() {
         let content_string = format!("{:?}", &result.content[0]);
         assert!(content_string.contains(&expected_value.to_string()));
     }
-    
+
     // Final get should return 5
     let result = server.get().await.unwrap();
     assert!(!result.content.is_empty());
@@ -88,7 +88,7 @@ async fn test_multiple_increments() {
 #[tokio::test]
 async fn test_concurrent_operations() {
     let server = CounterServer::new();
-    
+
     // Spawn multiple concurrent increment operations
     let mut handles = vec![];
     for _ in 0..10 {
@@ -96,13 +96,13 @@ async fn test_concurrent_operations() {
         let handle = tokio::spawn(async move { server_clone.increment().await.unwrap() });
         handles.push(handle);
     }
-    
+
     // Wait for all operations to complete
     for handle in handles {
         let result = handle.await.unwrap();
         assert!(!result.content.is_empty());
     }
-    
+
     // Final value should be 10
     let result = server.get().await.unwrap();
     assert!(!result.content.is_empty());
@@ -119,11 +119,11 @@ async fn test_server_compiles_and_runs() {
     let server = CounterServer::new();
     let info = server.get_info();
     assert!(info.instructions.is_some());
-    
+
     // Test basic server functionality directly
     let result = server.get().await.unwrap();
     assert!(!result.content.is_empty());
-    
+
     let result = server.increment().await.unwrap();
     assert!(!result.content.is_empty());
 }
