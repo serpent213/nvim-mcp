@@ -2,7 +2,6 @@ use rmcp::{
     model::CallToolRequestParam,
     service::ServiceExt,
     transport::{ConfigureCommandExt, TokioChildProcess},
-    serve_client,
 };
 use tokio::process::Command;
 use tracing::{error, info};
@@ -19,16 +18,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting MCP client to test counter server");
 
     // Connect to the server running as a child process
-    let service = serve_client(TokioChildProcess::new(Command::new("cargo").configure(
-        |cmd| {
-            cmd.args(&["run", "--bin", "nvim-mcp"]);
-        },
-    ))?)
-    .await
-    .map_err(|e| {
-        error!("Failed to connect to server: {}", e);
-        e
-    })?;
+    let service = ()
+        .serve(TokioChildProcess::new(Command::new("cargo").configure(
+            |cmd| {
+                cmd.args(["run", "--bin", "nvim-mcp"]);
+            },
+        ))?)
+        .await
+        .map_err(|e| {
+            error!("Failed to connect to server: {}", e);
+            e
+        })?;
 
     // Get server information
     let server_info = service.peer_info();
