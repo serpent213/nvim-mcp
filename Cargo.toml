@@ -2,5 +2,12 @@
 name = "nvim-mcp"
 version = "0.1.0"
 edition = "2024"
+description = "A stdio MCP server implementation using rmcp crate"
+license = "MIT"
 
 [dependencies]
+rmcp = { version = "0.3.0", features = ["transport-io", "transport-child-process", "client"] }
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+thiserror = "1.0"
