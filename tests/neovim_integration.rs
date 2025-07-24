@@ -72,9 +72,10 @@ async fn setup_connected_server(port: u16) -> (NeovimMcpServer, std::process::Ch
 #[traced_test]
 async fn test_connection_lifecycle() {
     let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
-
     let port = PORT_BASE;
     let address = format!("{HOST}:{port}");
+    drop(_guard);
+    
     let mut child = setup_neovim_instance(port).await;
     let server = NeovimMcpServer::new();
 
@@ -112,8 +113,9 @@ async fn test_connection_lifecycle() {
 #[traced_test]
 async fn test_buffer_operations() {
     let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
-
     let port = PORT_BASE;
+    drop(_guard);
+    
     let (server, mut child) = setup_connected_server(port).await;
 
     // Test buffer listing
@@ -191,10 +193,11 @@ async fn test_server_info() {
 #[traced_test]
 async fn test_connection_constraint() {
     let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
-
     // NOTE: Current implementation hardcodes connection to 127.0.0.1:6666
     // We can only test the single connection constraint with one instance
     let port = PORT_BASE;
+    drop(_guard);
+    
     let mut child = setup_neovim_instance(port).await;
     let server = NeovimMcpServer::new();
     let address = format!("{HOST}:{port}");
