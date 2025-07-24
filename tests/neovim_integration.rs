@@ -3,12 +3,16 @@ use nvim_mcp::server::neovim::ConnectNvimTCPRequest;
 use rmcp::ServerHandler;
 use rmcp::handler::server::tool::Parameters;
 use std::process::Command;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing_test::traced_test;
 
 const HOST: &str = "127.0.0.1";
 const PORT_BASE: u16 = 6666;
+
+// Global mutex to prevent concurrent Neovim instances from using the same port
+static NEOVIM_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 fn nvim_path() -> &'static str {
     "nvim"
@@ -67,6 +71,8 @@ async fn setup_connected_server(port: u16) -> (NeovimMcpServer, std::process::Ch
 #[tokio::test]
 #[traced_test]
 async fn test_connection_lifecycle() {
+    let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
+
     let port = PORT_BASE;
     let address = format!("{HOST}:{port}");
     let mut child = setup_neovim_instance(port).await;
@@ -105,6 +111,8 @@ async fn test_connection_lifecycle() {
 #[tokio::test]
 #[traced_test]
 async fn test_buffer_operations() {
+    let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
+
     let port = PORT_BASE;
     let (server, mut child) = setup_connected_server(port).await;
 
@@ -182,6 +190,8 @@ async fn test_server_info() {
 #[tokio::test]
 #[traced_test]
 async fn test_connection_constraint() {
+    let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
+
     // NOTE: Current implementation hardcodes connection to 127.0.0.1:6666
     // We can only test the single connection constraint with one instance
     let port = PORT_BASE;
