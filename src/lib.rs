@@ -1,7 +1,7 @@
 pub mod neovim;
 pub mod server;
 
-pub use server::{CounterServer, NeovimMcpServer};
+pub use server::NeovimMcpServer;
 
 pub type Result<T> = std::result::Result<T, ServerError>;
 
