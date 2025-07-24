@@ -1,5 +1,7 @@
 use nvim_mcp::NeovimMcpServer;
+use nvim_mcp::server::neovim::ConnectNvimTCPRequest;
 use rmcp::ServerHandler;
+use rmcp::handler::server::tool::Parameters;
 use std::process::Command;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
@@ -13,10 +15,10 @@ fn nvim_path() -> &'static str {
 }
 
 async fn setup_neovim_instance(port: u16) -> std::process::Child {
-    let listen = format!("{}:{}", HOST, port);
+    let listen = format!("{HOST}:{port}");
 
     let mut child = Command::new(nvim_path())
-        .args(&["-u", "NONE", "--headless", "--listen", &listen])
+        .args(["-u", "NONE", "--headless", "--listen", &listen])
         .spawn()
         .expect("Failed to start Neovim - ensure nvim is installed and in PATH");
 
@@ -32,7 +34,7 @@ async fn setup_neovim_instance(port: u16) -> std::process::Child {
 
         if start.elapsed() >= Duration::from_secs(3) {
             child.kill().expect("Failed to kill Neovim");
-            panic!("Neovim failed to start within 3 seconds at {}", listen);
+            panic!("Neovim failed to start within 3 seconds at {listen}");
         }
     }
 
@@ -49,11 +51,14 @@ async fn setup_connected_server(port: u16) -> (NeovimMcpServer, std::process::Ch
         child.kill().expect("Failed to kill Neovim");
         panic!("Current implementation only supports connecting to 127.0.0.1:6666");
     }
+    let address = format!("{HOST}:{port}");
 
-    let result = server.connect_nvim_tcp().await;
+    let result = server
+        .connect_nvim_tcp(Parameters(ConnectNvimTCPRequest { address }))
+        .await;
     if result.is_err() {
         child.kill().expect("Failed to kill Neovim");
-        panic!("Failed to connect to Neovim: {:?}", result);
+        panic!("Failed to connect to Neovim: {result:?}");
     }
 
     (server, child)
@@ -63,20 +68,29 @@ async fn setup_connected_server(port: u16) -> (NeovimMcpServer, std::process::Ch
 #[traced_test]
 async fn test_connection_lifecycle() {
     let port = PORT_BASE;
+    let address = format!("{HOST}:{port}");
     let mut child = setup_neovim_instance(port).await;
     let server = NeovimMcpServer::new();
 
     // Test connection
-    let result = server.connect_nvim_tcp().await;
-    assert!(result.is_ok(), "Failed to connect: {:?}", result);
+    let result = server
+        .connect_nvim_tcp(Parameters(ConnectNvimTCPRequest {
+            address: address.clone(),
+        }))
+        .await;
+    assert!(result.is_ok(), "Failed to connect: {result:?}");
 
     // Test that we can't connect again while already connected
-    let result = server.connect_nvim_tcp().await;
+    let result = server
+        .connect_nvim_tcp(Parameters(ConnectNvimTCPRequest {
+            address: address.clone(),
+        }))
+        .await;
     assert!(result.is_err(), "Should not be able to connect twice");
 
     // Test disconnect
     let result = server.disconnect_nvim_tcp().await;
-    assert!(result.is_ok(), "Failed to disconnect: {:?}", result);
+    assert!(result.is_ok(), "Failed to disconnect: {result:?}");
 
     // Test that disconnect fails when not connected
     let result = server.disconnect_nvim_tcp().await;
@@ -91,12 +105,12 @@ async fn test_connection_lifecycle() {
 #[tokio::test]
 #[traced_test]
 async fn test_buffer_operations() {
-    let port = PORT_BASE + 1;
+    let port = PORT_BASE;
     let (server, mut child) = setup_connected_server(port).await;
 
     // Test buffer listing
     let result = server.list_buffers().await;
-    assert!(result.is_ok(), "Failed to list buffers: {:?}", result);
+    assert!(result.is_ok(), "Failed to list buffers: {result:?}");
 
     let result = result.unwrap();
     assert!(!result.content.is_empty());
@@ -114,8 +128,7 @@ async fn test_buffer_operations() {
     // Should have at least one buffer (the initial empty buffer)
     assert!(
         content_text.contains("Buffer"),
-        "Buffer list should contain buffer info: {}",
-        content_text
+        "Buffer list should contain buffer info: {content_text:?}"
     );
 
     child.kill().expect("Failed to kill Neovim");
@@ -174,27 +187,34 @@ async fn test_connection_constraint() {
     let port = PORT_BASE;
     let mut child = setup_neovim_instance(port).await;
     let server = NeovimMcpServer::new();
+    let address = format!("{HOST}:{port}");
 
     // Connect to instance
-    let result = server.connect_nvim_tcp().await;
+    let result = server
+        .connect_nvim_tcp(Parameters(ConnectNvimTCPRequest {
+            address: address.clone(),
+        }))
+        .await;
     assert!(result.is_ok(), "Failed to connect to instance");
 
     // Try to connect again (should fail)
-    let result = server.connect_nvim_tcp().await;
-    assert!(
-        result.is_err(),
-        "Should not be able to connect twice"
-    );
+    let result = server
+        .connect_nvim_tcp(Parameters(ConnectNvimTCPRequest {
+            address: address.clone(),
+        }))
+        .await;
+    assert!(result.is_err(), "Should not be able to connect twice");
 
     // Disconnect and then connect again (should work)
     let result = server.disconnect_nvim_tcp().await;
     assert!(result.is_ok(), "Failed to disconnect from instance");
 
-    let result = server.connect_nvim_tcp().await;
-    assert!(
-        result.is_ok(),
-        "Failed to reconnect after disconnect"
-    );
+    let result = server
+        .connect_nvim_tcp(Parameters(ConnectNvimTCPRequest {
+            address: address.clone(),
+        }))
+        .await;
+    assert!(result.is_ok(), "Failed to reconnect after disconnect");
 
     child.kill().expect("Failed to kill Neovim");
 }

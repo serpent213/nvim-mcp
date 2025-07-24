@@ -1,6 +1,9 @@
 use nvim_rs::create::tokio as create;
 use rmcp::{
-    ErrorData as McpError, handler::server::router::tool::ToolRouter, model::*, tool, tool_router,
+    ErrorData as McpError,
+    handler::server::{router::tool::ToolRouter, tool::Parameters},
+    model::*,
+    schemars, serde, tool, tool_router,
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -15,6 +18,11 @@ pub struct NeovimMcpServer {
     pub tool_router: ToolRouter<Self>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ConnectNvimTCPRequest {
+    pub address: String,
+}
+
 #[tool_router]
 impl NeovimMcpServer {
     pub fn new() -> Self {
@@ -27,8 +35,10 @@ impl NeovimMcpServer {
 
     #[tool(description = "Connect to Neovim instance via TCP")]
     #[instrument(skip(self))]
-    pub async fn connect_nvim_tcp(&self) -> Result<CallToolResult, McpError> {
-        let address = "127.0.0.1:6666";
+    pub async fn connect_nvim_tcp(
+        &self,
+        Parameters(ConnectNvimTCPRequest { address }): Parameters<ConnectNvimTCPRequest>,
+    ) -> Result<CallToolResult, McpError> {
         debug!("Attempting to connect to Neovim at {}", address);
 
         let mut conn_guard = self.connection.lock().await;

@@ -496,6 +496,7 @@ dependencies = [
  "nvim-rs",
  "rmcp",
  "rmpv",
+ "serde",
  "thiserror",
  "tokio",
  "tracing",
