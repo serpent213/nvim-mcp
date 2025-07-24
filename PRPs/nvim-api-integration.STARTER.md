@@ -1,11 +1,10 @@
-# Neovim API integration Blueprint
+# Neovim API Integration Blueprint
 
 ## Feature
 
-Integrate Neovim's powerful API through a TCP client that enables seamless
-communication with Neovim instances. This implementation provides a robust
-foundation for building editor-aware tools that can interact with Neovim's
-rich feature set.
+Integrate Neovim's API through a TCP client for seamless communication with
+Neovim instances. This provides a foundation for building editor-aware tools
+that leverage Neovim's capabilities.
 
 **Core API Features:**
 
@@ -15,10 +14,12 @@ rich feature set.
 
 **MCP Server Tools:**
 
-Transform these API capabilities into actionable MCP server tools:
+Transform these capabilities into MCP server tools:
 
+- `connect_nvim_tcp` - Connect to a Neovim instance via TCP (one at a time)
+- `disconnect_nvim_tcp` - Disconnect from a Neovim instance
 - `list_buffers` - Retrieve and inspect open buffers
-- `exec_lua` - Execute custom Lua scripts within Neovim context
+- `exec_lua` - Execute Lua scripts within Neovim context
 
 ## Examples
 
@@ -26,14 +27,12 @@ Transform these API capabilities into actionable MCP server tools:
 
 ```toml
 [dependencies]
-nvim-rs = { version = "0.9.2", feature = ["use_tokio"]}
+nvim-rs = { version = "0.9.2", features = ["use_tokio"] }
 ```
 
 ```rust
-//! A basic example. Mainly for use in a test, but also shows off some basic
-//! functionality.
+//! Basic TCP client example demonstrating core functionality
 use std::{env, error::Error, fs};
-
 
 use rmpv::Value;
 
@@ -112,7 +111,7 @@ async fn main() {
 }
 ```
 
-### Simple integration test Example
+### Integration Test Example
 
 ```rust
 const HOST: &str = "127.0.0.1";
@@ -165,13 +164,13 @@ async fn can_connect_via_tcp() {
 
 ## Other Considerations
 
-- **Connection Management**: Implement robust connection handling with automatic
-  reconnection and graceful degradation
+- **Connection Management**: Implement robust connection handling with
+  automatic reconnection and graceful degradation
 - **Error Handling**: Provide comprehensive error handling for network failures,
-  API errors, and protocol-level issues
-- **Security**: Validate and sanitize Lua code execution to prevent potential
-  security risks
+  API errors, and protocol issues
+- **Security**: Validate and sanitize Lua code execution to prevent security
+  risks
 - **Testing**: Use integration tests with actual Neovim instances to ensure API
-  compatibility across versions
+  compatibility
 - **Monitoring**: Add logging and metrics to track API usage and connection
   health
