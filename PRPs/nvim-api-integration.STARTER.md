@@ -1,21 +1,24 @@
-# Neovim API integration Blueprint (Work In Progress)
+# Neovim API integration Blueprint
 
 ## Feature
 
-Use Neovim API to create a TCP client that can communicate with Neovim instances.
-This client will be able to send requests and receive responses,
-allowing for interaction with Neovim's features.
+Integrate Neovim's powerful API through a TCP client that enables seamless
+communication with Neovim instances. This implementation provides a robust
+foundation for building editor-aware tools that can interact with Neovim's
+rich feature set.
 
-Support below features:
+**Core API Features:**
 
-- list buffers (`nvim_list_bufs`)
-- execute lua code (`nvim_exec_lua`)
-- further extendable to support more Neovim API features.
+- **Buffer Management**: List and manipulate buffers using `nvim_list_bufs`
+- **Lua Execution**: Execute Lua code directly in Neovim with `nvim_exec_lua`
+- **Extensible Architecture**: Designed to easily support additional Neovim API features
 
-And turn those features into actionable mcp server tools. .e.g.:
+**MCP Server Tools:**
 
-- list_buffers
-- exec_lua
+Transform these API capabilities into actionable MCP server tools:
+
+- `list_buffers` - Retrieve and inspect open buffers
+- `exec_lua` - Execute custom Lua scripts within Neovim context
 
 ## Examples
 
@@ -153,8 +156,22 @@ async fn can_connect_via_tcp() {
 
 ## Documentation
 
-- [nvim-rs `create::new_tcp` Function Documentation](https://docs.rs/nvim-rs/latest/nvim_rs/create/tokio/fn.new_tcp.html)
-- [nvim-rs `Neovim::exec_lua` Method Documentation](https://docs.rs/nvim-rs/latest/nvim_rs/neovim/struct.Neovim.html#method.exec_lua)
-- [Neovim nvim_exec_lua Function Documentation](<https://neovim.io/doc/user/api.html#nvim_exec_lua()>)
+- [nvim-rs TCP Connection Guide](https://docs.rs/nvim-rs/latest/nvim_rs/create/tokio/fn.new_tcp.html)
+  \- Comprehensive guide for establishing TCP connections to Neovim
+- [nvim-rs Lua Execution Reference](https://docs.rs/nvim-rs/latest/nvim_rs/neovim/struct.Neovim.html#method.exec_lua)
+  \- Detailed documentation for executing Lua code through the API
+- [Neovim API Reference](<https://neovim.io/doc/user/api.html#nvim_exec_lua()>) -
+  Official Neovim API documentation with complete function specifications
 
 ## Other Considerations
+
+- **Connection Management**: Implement robust connection handling with automatic
+  reconnection and graceful degradation
+- **Error Handling**: Provide comprehensive error handling for network failures,
+  API errors, and protocol-level issues
+- **Security**: Validate and sanitize Lua code execution to prevent potential
+  security risks
+- **Testing**: Use integration tests with actual Neovim instances to ensure API
+  compatibility across versions
+- **Monitoring**: Add logging and metrics to track API usage and connection
+  health
