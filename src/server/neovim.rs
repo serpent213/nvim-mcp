@@ -5,10 +5,10 @@ use rmcp::{
     model::*,
     schemars, serde, tool, tool_router,
 };
+use rmpv::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, instrument};
-// use rmpv::Value;
 
 use crate::neovim::{NeovimConnection, NeovimHandler};
 
@@ -21,6 +21,11 @@ pub struct NeovimMcpServer {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ConnectNvimTCPRequest {
     pub address: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ExecuteLuaRequest {
+    pub code: String,
 }
 
 #[tool_router]
@@ -149,36 +154,40 @@ impl NeovimMcpServer {
         }
     }
 
-    // #[tool(description = "Execute Lua code in Neovim")]
-    // #[instrument(skip(self))]
-    // pub async fn exec_lua(
-    //     &self,
-    //     code: String,
-    // ) -> Result<CallToolResult, McpError> {
-    //     debug!("Executing Lua code: {}", code);
-    //
-    //     if code.trim().is_empty() {
-    //         return Err(McpError::invalid_request("Lua code cannot be empty", None));
-    //     }
+    #[tool(description = "Execute Lua code in Neovim")]
+    #[instrument(skip(self))]
+    pub async fn exec_lua(
+        &self,
+        Parameters(ExecuteLuaRequest { code }): Parameters<ExecuteLuaRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Executing Lua code: {}", code);
 
-    //     let conn_guard = self.connection.lock().await;
-    //     let conn = conn_guard.as_ref()
-    //         .ok_or_else(|| McpError::invalid_request("Not connected to any Neovim instance", None))?;
+        if code.trim().is_empty() {
+            return Err(McpError::invalid_request("Lua code cannot be empty", None));
+        }
 
-    //     let lua_args = Vec::<Value>::new();
-    //     match conn.nvim.exec_lua(&code, lua_args).await {
-    //         Ok(result) => {
-    //             debug!("Lua execution successful, result: {:?}", result);
-    //             Ok(CallToolResult::success(vec![
-    //                 Content::text(format!("Lua result: {:?}", result))
-    //             ]))
-    //         }
-    //         Err(e) => {
-    //             debug!("Lua execution failed: {}", e);
-    //             Err(McpError::internal_error(format!("Lua execution failed: {}", e), None))
-    //         }
-    //     }
-    // }
+        let conn_guard = self.connection.lock().await;
+        let conn = conn_guard.as_ref().ok_or_else(|| {
+            McpError::invalid_request("Not connected to any Neovim instance", None)
+        })?;
+
+        let lua_args = Vec::<Value>::new();
+        match conn.nvim.exec_lua(&code, lua_args).await {
+            Ok(result) => {
+                debug!("Lua execution successful, result: {:?}", result);
+                Ok(CallToolResult::success(vec![Content::text(format!(
+                    "Lua result: {result:?}",
+                ))]))
+            }
+            Err(e) => {
+                debug!("Lua execution failed: {e}");
+                Err(McpError::internal_error(
+                    format!("Lua execution failed: {e}"),
+                    None,
+                ))
+            }
+        }
+    }
 
     pub fn router(&self) -> &ToolRouter<Self> {
         &self.tool_router

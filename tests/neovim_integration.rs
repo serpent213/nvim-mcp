@@ -1,5 +1,5 @@
 use nvim_mcp::NeovimMcpServer;
-use nvim_mcp::server::neovim::ConnectNvimTCPRequest;
+use nvim_mcp::server::neovim::{ConnectNvimTCPRequest, ExecuteLuaRequest};
 use rmcp::ServerHandler;
 use rmcp::handler::server::tool::Parameters;
 use std::process::Command;
@@ -9,7 +9,7 @@ use tokio::time::sleep;
 use tracing_test::traced_test;
 
 const HOST: &str = "127.0.0.1";
-const PORT_BASE: u16 = 6666;
+const PORT_BASE: u16 = 7777;
 
 // Global mutex to prevent concurrent Neovim instances from using the same port
 static NEOVIM_TEST_MUTEX: Mutex<()> = Mutex::new(());
@@ -36,32 +36,35 @@ async fn setup_neovim_instance(port: u16) -> std::process::Child {
             break;
         }
 
-        if start.elapsed() >= Duration::from_secs(3) {
-            child.kill().expect("Failed to kill Neovim");
-            panic!("Neovim failed to start within 3 seconds at {listen}");
+        if start.elapsed() >= Duration::from_secs(10) {
+            let _ = child.kill();
+            panic!("Neovim failed to start within 10 seconds at {listen}");
         }
     }
 
     child
 }
 
-async fn setup_connected_server(port: u16) -> (NeovimMcpServer, std::process::Child) {
-    let mut child = setup_neovim_instance(port).await;
-    let server = NeovimMcpServer::new();
-
-    // Note: Current implementation connects to hardcoded 127.0.0.1:6666
-    // For tests to work properly, we need to use port 6666
-    if port != 6666 {
-        child.kill().expect("Failed to kill Neovim");
-        panic!("Current implementation only supports connecting to 127.0.0.1:6666");
+/// Helper to cleanup Neovim process safely
+fn cleanup_nvim_process(mut child: std::process::Child) {
+    if let Err(e) = child.kill() {
+        tracing::warn!("Failed to kill Neovim process: {}", e);
     }
+    if let Err(e) = child.wait() {
+        tracing::warn!("Failed to wait for Neovim process: {}", e);
+    }
+}
+
+async fn setup_connected_server(port: u16) -> (NeovimMcpServer, std::process::Child) {
+    let child = setup_neovim_instance(port).await;
+    let server = NeovimMcpServer::new();
     let address = format!("{HOST}:{port}");
 
     let result = server
         .connect_nvim_tcp(Parameters(ConnectNvimTCPRequest { address }))
         .await;
     if result.is_err() {
-        child.kill().expect("Failed to kill Neovim");
+        cleanup_nvim_process(child);
         panic!("Failed to connect to Neovim: {result:?}");
     }
 
@@ -71,12 +74,14 @@ async fn setup_connected_server(port: u16) -> (NeovimMcpServer, std::process::Ch
 #[tokio::test]
 #[traced_test]
 async fn test_connection_lifecycle() {
-    let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
     let port = PORT_BASE;
     let address = format!("{HOST}:{port}");
-    drop(_guard);
-    
-    let mut child = setup_neovim_instance(port).await;
+
+    let child = {
+        let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
+        drop(_guard);
+        setup_neovim_instance(port).await
+    };
     let server = NeovimMcpServer::new();
 
     // Test connection
@@ -106,17 +111,19 @@ async fn test_connection_lifecycle() {
         "Should not be able to disconnect when not connected"
     );
 
-    child.kill().expect("Failed to kill Neovim");
+    cleanup_nvim_process(child);
 }
 
 #[tokio::test]
 #[traced_test]
 async fn test_buffer_operations() {
-    let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
-    let port = PORT_BASE;
-    drop(_guard);
-    
-    let (server, mut child) = setup_connected_server(port).await;
+    let port = PORT_BASE + 1;
+
+    let (server, child) = {
+        let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
+        drop(_guard);
+        setup_connected_server(port).await
+    };
 
     // Test buffer listing
     let result = server.list_buffers().await;
@@ -141,15 +148,72 @@ async fn test_buffer_operations() {
         "Buffer list should contain buffer info: {content_text:?}"
     );
 
-    child.kill().expect("Failed to kill Neovim");
+    cleanup_nvim_process(child);
 }
 
-// NOTE: exec_lua is currently commented out in implementation
-// #[tokio::test]
-// #[traced_test]
-// async fn test_lua_execution() {
-//     // Placeholder for when exec_lua is implemented
-// }
+#[tokio::test]
+#[traced_test]
+async fn test_lua_execution() {
+    let port = PORT_BASE + 3;
+
+    let (server, child) = {
+        let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
+        drop(_guard);
+        setup_connected_server(port).await
+    };
+
+    // Test successful Lua execution
+    let result = server
+        .exec_lua(Parameters(ExecuteLuaRequest {
+            code: "return 42".to_string(),
+        }))
+        .await;
+    assert!(result.is_ok(), "Failed to execute Lua: {result:?}");
+
+    let result = result.unwrap();
+    assert!(!result.content.is_empty());
+
+    let content_text = if let Some(content) = result.content.first() {
+        if let Some(text_content) = content.as_text() {
+            &text_content.text
+        } else {
+            panic!("Expected text content")
+        }
+    } else {
+        panic!("No content in result");
+    };
+
+    assert!(
+        content_text.contains("42"),
+        "Lua result should contain 42: {content_text:?}"
+    );
+
+    // Test Lua execution with string result
+    let result = server
+        .exec_lua(Parameters(ExecuteLuaRequest {
+            code: "return 'hello world'".to_string(),
+        }))
+        .await;
+    assert!(result.is_ok(), "Failed to execute Lua: {result:?}");
+
+    // Test error handling for invalid Lua
+    let result = server
+        .exec_lua(Parameters(ExecuteLuaRequest {
+            code: "invalid lua syntax !!!".to_string(),
+        }))
+        .await;
+    assert!(result.is_err(), "Should fail for invalid Lua syntax");
+
+    // Test error handling for empty code
+    let result = server
+        .exec_lua(Parameters(ExecuteLuaRequest {
+            code: "".to_string(),
+        }))
+        .await;
+    assert!(result.is_err(), "Should fail for empty Lua code");
+
+    cleanup_nvim_process(child);
+}
 
 #[tokio::test]
 #[traced_test]
@@ -163,15 +227,15 @@ async fn test_error_handling() {
         "list_buffers should fail when not connected"
     );
 
-    // NOTE: exec_lua is currently commented out in implementation
-    // let result = server.exec_lua("return 1".to_string(), None).await;
-    // assert!(result.is_err(), "exec_lua should fail when not connected");
+    let result = server
+        .exec_lua(Parameters(ExecuteLuaRequest {
+            code: "return 1".to_string(),
+        }))
+        .await;
+    assert!(result.is_err(), "exec_lua should fail when not connected");
 
     let result = server.disconnect_nvim_tcp().await;
     assert!(result.is_err(), "disconnect should fail when not connected");
-
-    // NOTE: Current implementation doesn't take address parameter
-    // Test that connection works when Neovim is available (since it connects to hardcoded address)
 }
 
 #[tokio::test]
@@ -192,13 +256,13 @@ async fn test_server_info() {
 #[tokio::test]
 #[traced_test]
 async fn test_connection_constraint() {
-    let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
-    // NOTE: Current implementation hardcodes connection to 127.0.0.1:6666
-    // We can only test the single connection constraint with one instance
-    let port = PORT_BASE;
-    drop(_guard);
-    
-    let mut child = setup_neovim_instance(port).await;
+    let port = PORT_BASE + 2;
+
+    let child = {
+        let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
+        drop(_guard);
+        setup_neovim_instance(port).await
+    };
     let server = NeovimMcpServer::new();
     let address = format!("{HOST}:{port}");
 
@@ -229,5 +293,5 @@ async fn test_connection_constraint() {
         .await;
     assert!(result.is_ok(), "Failed to reconnect after disconnect");
 
-    child.kill().expect("Failed to kill Neovim");
+    cleanup_nvim_process(child);
 }

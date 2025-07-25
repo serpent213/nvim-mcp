@@ -21,9 +21,7 @@ async fn setup_test_neovim_instance(
         .args(["-u", "NONE", "--headless", "--listen", &listen])
         .spawn()
         .map_err(|e| {
-            format!(
-                "Failed to start Neovim - ensure nvim is installed and in PATH: {e}"
-            )
+            format!("Failed to start Neovim - ensure nvim is installed and in PATH: {e}")
         })?;
 
     // Wait for Neovim to start and create the TCP socket
@@ -36,14 +34,24 @@ async fn setup_test_neovim_instance(
             break;
         }
 
-        if start.elapsed() >= Duration::from_secs(5) {
+        if start.elapsed() >= Duration::from_secs(10) {
             let _ = child.kill();
-            return Err(format!("Neovim failed to start within 5 seconds at {listen}").into());
+            return Err(format!("Neovim failed to start within 10 seconds at {listen}").into());
         }
     }
 
     debug!("Neovim instance started at {}", listen);
     Ok(child)
+}
+
+/// Helper to cleanup Neovim process safely
+fn cleanup_nvim_process(mut child: std::process::Child) {
+    if let Err(e) = child.kill() {
+        tracing::warn!("Failed to kill Neovim process: {}", e);
+    }
+    if let Err(e) = child.wait() {
+        tracing::warn!("Failed to wait for Neovim process: {}", e);
+    }
 }
 
 #[tokio::test]
@@ -146,7 +154,7 @@ async fn test_connect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error>> 
 
     // Start a test Neovim instance
     let port = 6667; // Use different port to avoid conflicts
-    let mut nvim_child = setup_test_neovim_instance(port).await?;
+    let nvim_child = setup_test_neovim_instance(port).await?;
 
     let address = format!("127.0.0.1:{port}");
 
@@ -191,7 +199,7 @@ async fn test_connect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error>> 
     assert!(result.is_err(), "Should not be able to connect twice");
 
     // Cleanup
-    let _ = nvim_child.kill();
+    cleanup_nvim_process(nvim_child);
     service.cancel().await?;
     info!("Connect nvim TCP tool test completed successfully");
 
@@ -227,7 +235,7 @@ async fn test_disconnect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error
 
     // Now connect first, then test disconnect
     let port = 6668;
-    let mut nvim_child = setup_test_neovim_instance(port).await?;
+    let nvim_child = setup_test_neovim_instance(port).await?;
 
     let address = format!("127.0.0.1:{port}");
 
@@ -279,7 +287,7 @@ async fn test_disconnect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error
     );
 
     // Cleanup
-    let _ = nvim_child.kill();
+    cleanup_nvim_process(nvim_child);
     service.cancel().await?;
     info!("Disconnect nvim TCP tool test completed successfully");
 
@@ -318,7 +326,7 @@ async fn test_list_buffers_tool() -> Result<(), Box<dyn std::error::Error>> {
 
     // Now connect first, then test list buffers
     let port = 6669;
-    let mut nvim_child = setup_test_neovim_instance(port).await?;
+    let nvim_child = setup_test_neovim_instance(port).await?;
 
     let address = format!("127.0.0.1:{port}");
 
@@ -358,7 +366,7 @@ async fn test_list_buffers_tool() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Cleanup
-    let _ = nvim_child.kill();
+    cleanup_nvim_process(nvim_child);
     service.cancel().await?;
     info!("List buffers tool test completed successfully");
 
@@ -384,7 +392,7 @@ async fn test_complete_workflow() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start Neovim instance
     let port = 6670;
-    let mut nvim_child = setup_test_neovim_instance(port).await?;
+    let nvim_child = setup_test_neovim_instance(port).await?;
 
     let address = format!("127.0.0.1:{port}");
 
@@ -443,7 +451,7 @@ async fn test_complete_workflow() -> Result<(), Box<dyn std::error::Error>> {
     info!("✓ Verified disconnect state");
 
     // Cleanup
-    let _ = nvim_child.kill();
+    cleanup_nvim_process(nvim_child);
     service.cancel().await?;
     info!("Complete workflow test completed successfully");
 
@@ -508,6 +516,141 @@ async fn test_error_handling() -> Result<(), Box<dyn std::error::Error>> {
 
     service.cancel().await?;
     info!("Error handling test completed successfully");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_exec_lua_tool() -> Result<(), Box<dyn std::error::Error>> {
+    info!("Starting MCP client to test nvim-mcp server");
+
+    let service = ()
+        .serve(TokioChildProcess::new(Command::new("cargo").configure(
+            |cmd| {
+                cmd.args(["run", "--bin", "nvim-mcp"]);
+            },
+        ))?)
+        .await
+        .map_err(|e| {
+            error!("Failed to connect to server: {}", e);
+            e
+        })?;
+
+    // Test exec_lua without connection (should fail)
+    let mut lua_args = Map::new();
+    lua_args.insert("code".to_string(), Value::String("return 42".to_string()));
+
+    let result = service
+        .call_tool(CallToolRequestParam {
+            name: "exec_lua".into(),
+            arguments: Some(lua_args),
+        })
+        .await;
+
+    assert!(result.is_err(), "exec_lua should fail when not connected");
+
+    // Now connect first, then test exec_lua
+    let port = 6671;
+    let nvim_child = setup_test_neovim_instance(port).await?;
+
+    let address = format!("127.0.0.1:{port}");
+
+    // Connect first
+    let mut connect_args = Map::new();
+    connect_args.insert("address".to_string(), Value::String(address));
+
+    let _connect_result = service
+        .call_tool(CallToolRequestParam {
+            name: "connect_nvim_tcp".into(),
+            arguments: Some(connect_args),
+        })
+        .await?;
+
+    // Test successful Lua execution
+    let mut lua_args = Map::new();
+    lua_args.insert("code".to_string(), Value::String("return 42".to_string()));
+
+    let result = service
+        .call_tool(CallToolRequestParam {
+            name: "exec_lua".into(),
+            arguments: Some(lua_args),
+        })
+        .await?;
+
+    info!("Exec Lua result: {:#?}", result);
+    assert!(!result.content.is_empty());
+
+    // Verify the response contains Lua result
+    if let Some(content) = result.content.first() {
+        if let Some(text) = content.as_text() {
+            assert!(text.text.contains("42"));
+        } else {
+            panic!("Expected text content in exec_lua result");
+        }
+    } else {
+        panic!("No content in exec_lua result");
+    }
+
+    // Test Lua execution with string result
+    let mut lua_args = Map::new();
+    lua_args.insert(
+        "code".to_string(),
+        Value::String("return 'hello world'".to_string()),
+    );
+
+    let result = service
+        .call_tool(CallToolRequestParam {
+            name: "exec_lua".into(),
+            arguments: Some(lua_args),
+        })
+        .await?;
+
+    assert!(!result.content.is_empty());
+
+    // Test error handling for invalid Lua
+    let mut invalid_lua_args = Map::new();
+    invalid_lua_args.insert(
+        "code".to_string(),
+        Value::String("invalid lua syntax !!!".to_string()),
+    );
+
+    let result = service
+        .call_tool(CallToolRequestParam {
+            name: "exec_lua".into(),
+            arguments: Some(invalid_lua_args),
+        })
+        .await;
+
+    assert!(result.is_err(), "Should fail for invalid Lua syntax");
+
+    // Test error handling for empty code
+    let mut empty_lua_args = Map::new();
+    empty_lua_args.insert("code".to_string(), Value::String("".to_string()));
+
+    let result = service
+        .call_tool(CallToolRequestParam {
+            name: "exec_lua".into(),
+            arguments: Some(empty_lua_args),
+        })
+        .await;
+
+    assert!(result.is_err(), "Should fail for empty Lua code");
+
+    // Test missing arguments
+    let result = service
+        .call_tool(CallToolRequestParam {
+            name: "exec_lua".into(),
+            arguments: None,
+        })
+        .await;
+
+    assert!(result.is_err(), "Should fail when code argument is missing");
+
+    // Cleanup
+    cleanup_nvim_process(nvim_child);
+    service.cancel().await?;
+    info!("Exec Lua tool test completed successfully");
 
     Ok(())
 }
