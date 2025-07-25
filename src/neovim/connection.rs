@@ -21,10 +21,6 @@ impl NeovimConnection {
         }
     }
 
-    pub fn is_connected(&self) -> bool {
-        !self.io_handler.is_finished()
-    }
-
     pub fn address(&self) -> &str {
         &self.address
     }

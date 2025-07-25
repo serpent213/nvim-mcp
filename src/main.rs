@@ -1,7 +1,8 @@
-use nvim_mcp::NeovimMcpServer;
 use rmcp::{ServiceExt, transport::stdio};
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+
+use nvim_mcp::NeovimMcpServer;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

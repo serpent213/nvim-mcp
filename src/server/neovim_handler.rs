@@ -1,6 +1,7 @@
-use super::neovim::NeovimMcpServer;
 use rmcp::{ServerHandler, model::*, tool_handler};
 use tracing::{debug, instrument};
+
+use super::neovim::NeovimMcpServer;
 
 #[tool_handler]
 impl ServerHandler for NeovimMcpServer {

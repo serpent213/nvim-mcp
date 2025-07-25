@@ -1,5 +1,5 @@
-pub mod neovim;
-pub mod neovim_handler;
+pub(crate) mod neovim;
+mod neovim_handler;
 
 #[cfg(test)]
 mod integration_tests;

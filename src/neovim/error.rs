@@ -4,10 +4,6 @@ pub enum NeovimError {
     Connection(String),
     #[error("API error: {0}")]
     Api(String),
-    #[error("No active connection")]
-    NotConnected,
-    #[error("Already connected to {0}")]
-    AlreadyConnected(String),
 }
 
 impl From<std::io::Error> for NeovimError {

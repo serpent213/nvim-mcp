@@ -1,5 +1,5 @@
-pub mod neovim;
-pub mod server;
+mod neovim;
+mod server;
 
 pub use server::NeovimMcpServer;
 
