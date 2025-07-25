@@ -1,12 +1,14 @@
-use nvim_mcp::NeovimMcpServer;
-use nvim_mcp::server::neovim::{ConnectNvimTCPRequest, ExecuteLuaRequest};
-use rmcp::ServerHandler;
-use rmcp::handler::server::tool::Parameters;
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+use rmcp::ServerHandler;
+use rmcp::handler::server::tool::Parameters;
 use tokio::time::sleep;
 use tracing_test::traced_test;
+
+use crate::NeovimMcpServer;
+use crate::server::neovim::{ConnectNvimTCPRequest, ExecuteLuaRequest};
 
 const HOST: &str = "127.0.0.1";
 const PORT_BASE: u16 = 7777;

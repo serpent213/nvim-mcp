@@ -2,10 +2,22 @@
 name = "nvim-mcp"
 version = "0.1.0"
 edition = "2024"
-description = "A stdio MCP server implementation using rmcp crate"
+description = "MCP server for Neovim"
 license = "MIT"
 
 [dependencies]
+# Async Runtime and Concurrency
+async-trait = "0.1"
+futures = "0.3"
+tokio = { version = "1.0", features = ["full"] }
+
+# Error Handling
+thiserror = "2.0"
+
+# Logging and Tracing
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+
 # MCP Protocol Implementation
 rmcp = { version = "0.3.0", features = [
   "transport-io",
@@ -13,21 +25,11 @@ rmcp = { version = "0.3.0", features = [
   "client",
 ] }
 
-# Async Runtime and Concurrency
-tokio = { version = "1.0", features = ["full"] }
-
-# Logging and Tracing
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-
-# Error Handling
-thiserror = "2.0"
-
 # Neovim Integration
 nvim-rs = { version = "0.9.2", features = ["use_tokio"] }
 rmpv = "1.0"
-futures = "0.3"
-async-trait = "0.1"
+
+# Serialization
 serde = "1.0.219"
 
 [dev-dependencies]
