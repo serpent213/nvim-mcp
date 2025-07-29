@@ -50,10 +50,13 @@
               libiconv
             ];
             packages = with pkgs; [
+              # Development
               rust-analyzer-nightly
               pre-commit
 
+              # Integration tests
               neovim-unwrapped
+              lua-language-server
             ];
           };
         };

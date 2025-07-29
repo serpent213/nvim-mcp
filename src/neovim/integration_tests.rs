@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -8,7 +9,7 @@ use tokio::time::sleep;
 use tracing_test::traced_test;
 
 use crate::NeovimMcpServer;
-use crate::server::neovim::{ConnectNvimTCPRequest, ExecuteLuaRequest};
+use crate::server::neovim::{BufferId, ConnectNvimTCPRequest, ExecuteLuaRequest};
 
 const HOST: &str = "127.0.0.1";
 const PORT_BASE: u16 = 7777;
@@ -20,11 +21,20 @@ fn nvim_path() -> &'static str {
     "nvim"
 }
 
-async fn setup_neovim_instance(port: u16) -> std::process::Child {
+async fn setup_neovim_instance_advance(
+    port: u16,
+    cfg_path: &str,
+    open_file: &str,
+) -> std::process::Child {
     let listen = format!("{HOST}:{port}");
 
     let mut child = Command::new(nvim_path())
-        .args(["-u", "NONE", "--headless", "--listen", &listen])
+        .args(["-u", cfg_path, "--headless", "--listen", &listen])
+        .args(
+            (!open_file.is_empty())
+                .then_some(vec![open_file])
+                .unwrap_or_default(),
+        )
         .spawn()
         .expect("Failed to start Neovim - ensure nvim is installed and in PATH");
 
@@ -45,6 +55,10 @@ async fn setup_neovim_instance(port: u16) -> std::process::Child {
     }
 
     child
+}
+
+async fn setup_neovim_instance(port: u16) -> std::process::Child {
+    setup_neovim_instance_advance(port, "NONE", "").await
 }
 
 /// Helper to cleanup Neovim process safely
@@ -71,6 +85,13 @@ async fn setup_connected_server(port: u16) -> (NeovimMcpServer, std::process::Ch
     }
 
     (server, child)
+}
+
+fn get_testdata_path(filename: &str) -> PathBuf {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("src/neovim/testdata");
+    path.push(filename);
+    path
 }
 
 #[tokio::test]
@@ -294,6 +315,45 @@ async fn test_connection_constraint() {
         }))
         .await;
     assert!(result.is_ok(), "Failed to reconnect after disconnect");
+
+    cleanup_nvim_process(child);
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_get_vim_diagnostics() {
+    let port = PORT_BASE;
+
+    let child = {
+        let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
+        drop(_guard);
+        setup_neovim_instance_advance(
+            port,
+            get_testdata_path("cfg_lsp.lua").to_str().unwrap(),
+            get_testdata_path("diagnostic_problems.lua")
+                .to_str()
+                .unwrap(),
+        )
+        .await
+    };
+    let server = NeovimMcpServer::new();
+    let address = format!("{HOST}:{port}");
+
+    // Connect to instance
+    let result = server
+        .connect_nvim_tcp(Parameters(ConnectNvimTCPRequest {
+            address: address.clone(),
+        }))
+        .await;
+    assert!(result.is_ok(), "Failed to connect to instance");
+
+    sleep(Duration::from_secs(20)).await; // Allow time for LSP to initialize
+
+    // Execute Lua to get a diagnostic
+    let result = server
+        .buffer_diagnostics(Parameters(BufferId { id: 0 }))
+        .await;
+    assert!(result.is_ok(), "Failed to get diagnostics: {result:?}");
 
     cleanup_nvim_process(child);
 }

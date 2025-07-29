@@ -3,7 +3,7 @@ use rmcp::{
     ErrorData as McpError,
     handler::server::{router::tool::ToolRouter, tool::Parameters},
     model::*,
-    schemars, serde, tool, tool_router,
+    schemars, tool, tool_router,
 };
 use rmpv::Value;
 use std::sync::Arc;
@@ -26,6 +26,27 @@ pub struct ConnectNvimTCPRequest {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ExecuteLuaRequest {
     pub code: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct BufferId {
+    pub id: u64,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, serde::Deserialize)]
+pub struct Diagnostic {
+    pub message: String,
+    pub code: String,
+    pub severity: u8,
+    pub lnum: u64,
+    pub col: u64,
+    pub source: String,
+    pub bufnr: u64,
+    pub end_lnum: u64,
+    pub end_col: u64,
+    pub namespace: u64,
+    pub user_data: serde_json::Value,
 }
 
 #[tool_router]
@@ -183,6 +204,54 @@ impl NeovimMcpServer {
                 debug!("Lua execution failed: {e}");
                 Err(McpError::internal_error(
                     format!("Lua execution failed: {e}"),
+                    None,
+                ))
+            }
+        }
+    }
+
+    #[tool(description = "Get buffer's diagnostics")]
+    #[instrument(skip(self))]
+    pub async fn buffer_diagnostics(
+        &self,
+        Parameters(BufferId { id }): Parameters<BufferId>,
+    ) -> Result<CallToolResult, McpError> {
+        debug!("Getting diagnostics for buffer ID: {}", id);
+
+        let conn_guard = self.connection.lock().await;
+        let conn = conn_guard.as_ref().ok_or_else(|| {
+            McpError::invalid_request("Not connected to any Neovim instance", None)
+        })?;
+
+        match conn
+            .nvim
+            .execute_lua(
+                format!("return vim.json.encode(vim.diagnostic.get({id}))").as_str(),
+                vec![],
+            )
+            .await
+        {
+            Ok(diagnostics) => {
+                let diagnostics: Vec<Diagnostic> =
+                    match serde_json::from_str(diagnostics.as_str().unwrap()) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            debug!("Failed to parse diagnostics: {}", e);
+                            return Err(McpError::internal_error(
+                                format!("Failed to parse diagnostics: {e}"),
+                                None,
+                            ));
+                        }
+                    };
+                debug!("Found {diagnostics:?} diagnostics for buffer ID {id}");
+                Ok(CallToolResult::success(vec![Content::text(format!(
+                    "Diagnostics for buffer ID {id}: {diagnostics:?}",
+                ))]))
+            }
+            Err(e) => {
+                debug!("Failed to get diagnostics for buffer ID {}: {}", id, e);
+                Err(McpError::internal_error(
+                    format!("Failed to get diagnostics: {e}"),
                     None,
                 ))
             }
