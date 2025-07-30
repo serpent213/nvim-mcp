@@ -114,6 +114,7 @@ impl NeovimMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let client_guard = self.nvim_client.lock().await;
 
+        client_guard.setup_diagnostics_changed_autocmd().await?;
         let diagnostics = client_guard.get_buffer_diagnostics(id).await?;
 
         Ok(CallToolResult::success(vec![Content::text(format!(

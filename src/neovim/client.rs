@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use nvim_rs::{Handler, Neovim, compat::tokio::Compat, create::tokio as create};
 use rmpv::Value;
 use tokio::net::TcpStream;
-use tracing::{debug, instrument};
+use tracing::{debug, info, instrument};
 
 use super::{connection::NeovimConnection, error::NeovimError};
 
@@ -13,12 +13,22 @@ pub struct NeovimHandler;
 impl Handler for NeovimHandler {
     type Writer = Compat<tokio::io::WriteHalf<TcpStream>>;
 
+    async fn handle_notify(
+        &self,
+        name: String,
+        args: Vec<Value>,
+        _neovim: Neovim<Compat<tokio::io::WriteHalf<TcpStream>>>,
+    ) {
+        info!("handling notification: {name:?}, {args:?}");
+    }
+
     async fn handle_request(
         &self,
         name: String,
-        _args: Vec<Value>,
+        args: Vec<Value>,
         _neovim: Neovim<Compat<tokio::io::WriteHalf<TcpStream>>>,
     ) -> Result<Value, Value> {
+        info!("handling request: {name:?}, {args:?}");
         match name.as_ref() {
             "ping" => Ok(Value::from("pong")),
             _ => Ok(Value::Nil),
@@ -64,8 +74,15 @@ impl NeovimClient {
         let handler = NeovimHandler;
         match create::new_tcp(address, handler).await {
             Ok((nvim, io_handler)) => {
-                let connection =
-                    NeovimConnection::new(nvim, tokio::spawn(io_handler), address.to_string());
+                let connection = NeovimConnection::new(
+                    nvim,
+                    tokio::spawn(async move {
+                        let rv = io_handler.await;
+                        info!("io_handler completed with result: {:?}", rv);
+                        rv
+                    }),
+                    address.to_string(),
+                );
                 self.connection = Some(connection);
                 debug!("Successfully connected to Neovim at {}", address);
                 Ok(())
@@ -153,6 +170,50 @@ impl NeovimClient {
             Err(e) => {
                 debug!("Lua execution failed: {e}");
                 Err(NeovimError::Api(format!("Lua execution failed: {e}")))
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    pub async fn setup_diagnostics_changed_autocmd(&self) -> Result<(), NeovimError> {
+        debug!("Setting up diagnostics changed autocmd");
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        match conn
+            .nvim
+            .exec_lua(
+                r#"
+                    local group = vim.api.nvim_create_augroup("NVIM_MCP_DiagnosticsChanged", { clear = true })
+                    vim.api.nvim_create_autocmd("DiagnosticChanged", {
+                        group = group,
+                        callback = function(args)
+                            vim.rpcnotify(0, "NVIM_MCP_DiagnosticsChanged", args.data.diagnostics)
+                        end
+                    })
+                    vim.api.nvim_create_autocmd("LspAttach", {
+                        group = group,
+                        callback = function(args)
+                            vim.rpcnotify(0, "NVIM_MCP_LspAttach", args.data.diagnostics)
+                        end
+                    })
+                    vim.rpcnotify(0, "NVIM_MCP", "setup diagnostics changed autocmd")
+                "#,
+                vec![],
+            )
+            .await
+        {
+            Ok(_) => {
+                debug!("Autocmd for diagnostics changed set up successfully");
+                Ok(())
+            }
+            Err(e) => {
+                debug!("Failed to set up diagnostics changed autocmd: {}", e);
+                Err(NeovimError::Api(format!(
+                    "Failed to set up diagnostics changed autocmd: {e}"
+                )))
             }
         }
     }

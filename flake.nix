@@ -68,8 +68,8 @@
               cargo = toolchain;
               rustc = toolchain;
             };
-            crate = builtins.fromTOML (builtins.readFile ./Cargo.toml);
-            inherit (crate.package) version;
+            meta = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+            inherit (meta.package) version;
           in
             rustPlatform.buildRustPackage {
               pname = "nvim-mcp";
