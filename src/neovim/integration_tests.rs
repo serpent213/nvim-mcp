@@ -213,17 +213,6 @@ async fn test_error_handling() {
 
 #[tokio::test]
 #[traced_test]
-async fn test_client_creation() {
-    let _client = NeovimClient::new();
-
-    // Verify client can be created successfully
-    // This is a basic test to ensure the client struct can be instantiated
-    // without any server-specific functionality
-    assert!(true); // Client creation succeeded if we reach this point
-}
-
-#[tokio::test]
-#[traced_test]
 async fn test_connection_constraint() {
     let port = PORT_BASE + 2;
 

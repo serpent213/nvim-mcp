@@ -1,7 +1,7 @@
 +++
 title: Neovim API Integration PRP - TCP Client with MCP Server Tools
 
-description: 
+description:
   ## Purpose
 
   Implement a comprehensive Neovim API integration through a TCP client that
@@ -72,19 +72,19 @@ A Neovim TCP client implementation integrated as MCP server tools that provides:
 # MUST READ - Include these in your context window
 - url: https://docs.rs/nvim-rs/latest/nvim_rs/create/tokio/fn.new_tcp.html
   why: TCP connection creation with nvim-rs, Handler trait requirements
-  
+
 - url: https://docs.rs/nvim-rs/latest/nvim_rs/neovim/struct.Neovim.html
   why: Core API methods for buffer operations and Lua execution
-  
+
 - file: src/server/counter.rs
   why: MCP server implementation pattern with tool_router macro
-  
+
 - file: src/server/handler.rs
   why: ServerHandler trait implementation and capabilities setup
-  
+
 - file: tests/integration.rs
   why: Async testing patterns, concurrent operation testing
-  
+
 - file: examples/client.rs
   why: Child process client pattern for testing MCP servers
 
@@ -210,7 +210,7 @@ struct NeovimHandler;
 
 impl Handler for NeovimHandler {
     type Writer = Compat<TokioTcpStream>;
-    
+
     async fn handle_request(
         &self,
         name: String,
@@ -324,13 +324,13 @@ impl NeovimMcpServer {
         address: String,
     ) -> Result<CallToolResult, McpError> {
         let mut conn_guard = self.connection.lock().await;
-        
+
         // CRITICAL: Check existing connection
         if conn_guard.is_some() {
             return Err(McpError::InvalidRequest(
                 "Already connected".to_string()));
         }
-        
+
         // PATTERN: Create connection with error handling
         let handler = NeovimHandler;
         match create::new_tcp(&address, handler).await {
@@ -360,12 +360,12 @@ impl NeovimMcpServer {
         let conn = conn_guard.as_ref()
             .ok_or_else(|| McpError::InvalidRequest(
                 "Not connected".to_string()))?;
-        
+
         // CRITICAL: Validate Lua code for security
         if code.trim().is_empty() {
             return Err(McpError::InvalidRequest("Empty Lua code".to_string()));
         }
-        
+
         // PATTERN: Execute with proper error handling
         let lua_args = args.unwrap_or_default();
         match conn.nvim.exec_lua(&code, lua_args).await {
@@ -386,15 +386,15 @@ DEPENDENCIES:
   - add to: Cargo.toml
   - pattern: 'nvim-rs = { version = "0.9.2", features = ["use_tokio"] }'
   - pattern: 'rmpv = "1.0"'
-  
+
 MODULES:
   - add to: src/server/mod.rs
   - pattern: "pub mod neovim;"
-  
+
 MAIN:
   - modify: src/main.rs
   - pattern: "Add CLI option for neovim server selection"
-  
+
 TESTS:
   - create: tests/neovim_integration.rs
   - pattern: "Spawn real Neovim instance for testing"
@@ -422,11 +422,11 @@ Each new module should follow existing test patterns:
 #[tokio::test]
 async fn test_connection_lifecycle() {
     let server = NeovimMcpServer::new();
-    
+
     // Test connection
     let result = server.connect_nvim_tcp("127.0.0.1:6666".to_string()).await;
     assert!(result.is_ok());
-    
+
     // Test disconnect
     let result = server.disconnect_nvim_tcp().await;
     assert!(result.is_ok());
@@ -439,17 +439,17 @@ async fn test_buffer_operations() {
         .args(&["-u", "NONE", "--headless", "--listen", "127.0.0.1:6667"])
         .spawn()
         .expect("Failed to start Neovim");
-    
+
     // Wait for startup
     tokio::time::sleep(Duration::from_millis(500)).await;
-    
+
     let server = NeovimMcpServer::new();
     server.connect_nvim_tcp("127.0.0.1:6667".to_string()).await.unwrap();
-    
+
     // Test buffer listing
     let result = server.list_buffers().await.unwrap();
     assert!(!result.content.is_empty());
-    
+
     child.kill().expect("Failed to kill Neovim");
 }
 
@@ -457,7 +457,7 @@ async fn test_buffer_operations() {
 async fn test_lua_execution() {
     // Test basic Lua execution
     let server = setup_connected_server().await;
-    
+
     let result = server.exec_lua("return 2 + 2".to_string(), None).await.unwrap();
     assert!(result.content[0].text.contains("4"));
 }
@@ -465,11 +465,11 @@ async fn test_lua_execution() {
 #[tokio::test]
 async fn test_error_handling() {
     let server = NeovimMcpServer::new();
-    
+
     // Test operations without connection
     let result = server.list_buffers().await;
     assert!(result.is_err());
-    
+
     // Test invalid connection
     let result = server.connect_nvim_tcp("invalid:address".to_string()).await;
     assert!(result.is_err());
@@ -530,7 +530,7 @@ kill $NVIM_PID $SERVER_PID
 This PRP provides comprehensive context including:
 ✅ Complete nvim-rs API patterns and gotchas
 ✅ Existing MCP server architecture to follow
-✅ Detailed error handling and validation approaches  
+✅ Detailed error handling and validation approaches
 ✅ Real-world testing with Neovim instances
 ✅ Security considerations for Lua execution
 ✅ Progressive implementation with validation loops
