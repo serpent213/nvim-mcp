@@ -2,7 +2,7 @@ use clap::Parser;
 use rmcp::{ServiceExt, transport::stdio};
 use std::path::PathBuf;
 use tracing::{error, info};
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use tracing_subscriber::EnvFilter;
 
 use nvim_mcp::NeovimMcpServer;
 
@@ -23,13 +23,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Initialize tracing/logging
-    let env_filter = EnvFilter::from_default_env()
-        .add_directive("nvim_mcp=debug".parse()?)
-        .add_directive(cli.log_level.parse()?);
+    let env_filter = EnvFilter::from_default_env().add_directive(cli.log_level.parse()?);
 
-    if let Some(log_file) = cli.log_file {
+    let _guard = if let Some(log_file) = cli.log_file {
         // Log to file
-        let file_appender = tracing_appender::rolling::daily(
+        let file_appender = tracing_appender::rolling::never(
             log_file
                 .parent()
                 .unwrap_or_else(|| std::path::Path::new(".")),
@@ -37,19 +35,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .file_name()
                 .unwrap_or_else(|| std::ffi::OsStr::new("nvim-mcp.log")),
         );
-        let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+        let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
-        tracing_subscriber::registry()
-            .with(fmt::layer().with_writer(non_blocking).with_ansi(false))
-            .with(env_filter)
+        tracing_subscriber::fmt()
+            .with_writer(non_blocking)
+            .with_ansi(false)
+            .with_env_filter(env_filter)
             .init();
+
+        // Note: _guard is a WorkerGuard which is returned by tracing_appender::non_blocking
+        // to ensure buffered logs are flushed to their output
+        // in the case of abrupt terminations of a process.
+        Some(guard)
     } else {
         // Log to stderr (default behavior)
-        tracing_subscriber::registry()
-            .with(fmt::layer().with_writer(std::io::stderr))
-            .with(env_filter)
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_env_filter(env_filter)
             .init();
-    }
+
+        None
+    };
 
     info!("Starting nvim-mcp Neovim server");
     let server = NeovimMcpServer::new();
@@ -60,5 +66,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     service.waiting().await?;
 
     info!("Server shutdown complete");
+
     Ok(())
 }
