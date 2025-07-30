@@ -8,7 +8,10 @@ through TCP connections.
 
 - **TCP Connection Management**: Connect to and disconnect from Neovim
   instances via TCP
-- **Buffer Operations**: List and inspect all open buffers with detailed information
+- **Buffer Operations**: List and inspect all open buffers with detailed
+  information
+- **Diagnostics**: Get diagnostics for specific buffers with detailed
+  error and warning information
 - **Lua Execution**: Execute arbitrary Lua code directly in Neovim
 
 ## Installation
@@ -32,22 +35,39 @@ nix run github:linw1995/nvim-mcp
 ### Starting the Server
 
 ```bash
-# Run the MCP server
+# Run the MCP server (basic)
 cargo run --release
-# or with Nix
+
+# Run with custom log file and level
+cargo run --release -- --log-file ./nvim-mcp.log --log-level debug
+
+# Or with Nix
 nix run .
 ```
+
+### Command Line Options
+
+The server supports the following command-line options:
+
+- `--log-file <PATH>`: Path to the log file (optional, defaults to stderr)
+- `--log-level <LEVEL>`: Log level - trace, debug, info, warn, error
+  (defaults to info)
 
 ### Available Tools
 
 The server provides the following MCP tools:
 
 - **`connect_nvim_tcp`**: Connect to a Neovim instance via TCP
+
   - Parameters: `address` (string) - TCP address (e.g., "127.0.0.1:6666")
 
 - **`disconnect_nvim_tcp`**: Disconnect from the current Neovim instance
 
 - **`list_buffers`**: List all open buffers with their names and line counts
+
+- **`buffer_diagnostics`**: Get diagnostics for a specific buffer
+
+  - Parameters: `id` (number) - Buffer ID to get diagnostics for
 
 - **`exec_lua`**: Execute Lua code in Neovim
   - Parameters: `code` (string) - Lua code to execute
@@ -83,13 +103,18 @@ echo 'use flake' > .envrc
 ### Testing
 
 ```bash
-# Run all tests
-nix develop . --command cargo test -- --show-output --test-threads 1
+# Run all tests (use single thread to prevent port conflicts)
+cargo test -- --show-output --test-threads 1
 
-# Skip integration tests
-nix develop . --command cargo test -- \
-  --skip=integration_tests --show-output --test-threads 1
+# Skip integration tests (which require Neovim)
+cargo test -- --skip=integration_tests --show-output --test-threads 1
+
+# Run tests in Nix environment
+nix develop . --command cargo test -- --show-output --test-threads 1
 ```
+
+**Note**: If you're already in a Nix shell,
+use the commands directly without the `nix develop . --command` prefix.
 
 ### Running
 
@@ -97,8 +122,15 @@ nix develop . --command cargo test -- \
 # Run the server
 nix run .
 
-# Or in development mode
-nix develop . --command cargo run
+# Development build and run
+cargo build
+cargo run
+
+# Production build and run
+cargo build --release
+
+# Run with custom logging in development
+cargo run -- --log-file ./debug.log --log-level debug
 ```
 
 ## License
