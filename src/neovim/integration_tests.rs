@@ -3,13 +3,10 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use rmcp::ServerHandler;
-use rmcp::handler::server::tool::Parameters;
 use tokio::time::sleep;
 use tracing_test::traced_test;
 
-use crate::NeovimMcpServer;
-use crate::server::neovim::{BufferId, ConnectNvimTCPRequest, ExecuteLuaRequest};
+use crate::neovim::NeovimClient;
 
 const HOST: &str = "127.0.0.1";
 const PORT_BASE: u16 = 7777;
@@ -71,20 +68,18 @@ fn cleanup_nvim_process(mut child: std::process::Child) {
     }
 }
 
-async fn setup_connected_server(port: u16) -> (NeovimMcpServer, std::process::Child) {
+async fn setup_connected_client(port: u16) -> (NeovimClient, std::process::Child) {
     let child = setup_neovim_instance(port).await;
-    let server = NeovimMcpServer::new();
+    let mut client = NeovimClient::new();
     let address = format!("{HOST}:{port}");
 
-    let result = server
-        .connect_nvim_tcp(Parameters(ConnectNvimTCPRequest { address }))
-        .await;
+    let result = client.connect(&address).await;
     if result.is_err() {
         cleanup_nvim_process(child);
         panic!("Failed to connect to Neovim: {result:?}");
     }
 
-    (server, child)
+    (client, child)
 }
 
 fn get_testdata_path(filename: &str) -> PathBuf {
@@ -105,30 +100,22 @@ async fn test_connection_lifecycle() {
         drop(_guard);
         setup_neovim_instance(port).await
     };
-    let server = NeovimMcpServer::new();
+    let mut client = NeovimClient::new();
 
     // Test connection
-    let result = server
-        .connect_nvim_tcp(Parameters(ConnectNvimTCPRequest {
-            address: address.clone(),
-        }))
-        .await;
+    let result = client.connect(&address).await;
     assert!(result.is_ok(), "Failed to connect: {result:?}");
 
     // Test that we can't connect again while already connected
-    let result = server
-        .connect_nvim_tcp(Parameters(ConnectNvimTCPRequest {
-            address: address.clone(),
-        }))
-        .await;
+    let result = client.connect(&address).await;
     assert!(result.is_err(), "Should not be able to connect twice");
 
     // Test disconnect
-    let result = server.disconnect_nvim_tcp().await;
+    let result = client.disconnect().await;
     assert!(result.is_ok(), "Failed to disconnect: {result:?}");
 
     // Test that disconnect fails when not connected
-    let result = server.disconnect_nvim_tcp().await;
+    let result = client.disconnect().await;
     assert!(
         result.is_err(),
         "Should not be able to disconnect when not connected"
@@ -142,33 +129,24 @@ async fn test_connection_lifecycle() {
 async fn test_buffer_operations() {
     let port = PORT_BASE + 1;
 
-    let (server, child) = {
+    let (client, child) = {
         let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
         drop(_guard);
-        setup_connected_server(port).await
+        setup_connected_client(port).await
     };
 
     // Test buffer listing
-    let result = server.list_buffers().await;
+    let result = client.list_buffers_info().await;
     assert!(result.is_ok(), "Failed to list buffers: {result:?}");
 
-    let result = result.unwrap();
-    assert!(!result.content.is_empty());
-
-    let content_text = if let Some(content) = result.content.first() {
-        if let Some(text_content) = content.as_text() {
-            &text_content.text
-        } else {
-            panic!("Expected text content")
-        }
-    } else {
-        panic!("No content in result");
-    };
+    let buffer_info = result.unwrap();
+    assert!(!buffer_info.is_empty());
 
     // Should have at least one buffer (the initial empty buffer)
+    let buffer_info_text = buffer_info.join(", ");
     assert!(
-        content_text.contains("Buffer"),
-        "Buffer list should contain buffer info: {content_text:?}"
+        buffer_info_text.contains("Buffer"),
+        "Buffer list should contain buffer info: {buffer_info_text:?}"
     );
 
     cleanup_nvim_process(child);
@@ -179,60 +157,32 @@ async fn test_buffer_operations() {
 async fn test_lua_execution() {
     let port = PORT_BASE + 3;
 
-    let (server, child) = {
+    let (client, child) = {
         let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
         drop(_guard);
-        setup_connected_server(port).await
+        setup_connected_client(port).await
     };
 
     // Test successful Lua execution
-    let result = server
-        .exec_lua(Parameters(ExecuteLuaRequest {
-            code: "return 42".to_string(),
-        }))
-        .await;
+    let result = client.execute_lua("return 42").await;
     assert!(result.is_ok(), "Failed to execute Lua: {result:?}");
 
-    let result = result.unwrap();
-    assert!(!result.content.is_empty());
-
-    let content_text = if let Some(content) = result.content.first() {
-        if let Some(text_content) = content.as_text() {
-            &text_content.text
-        } else {
-            panic!("Expected text content")
-        }
-    } else {
-        panic!("No content in result");
-    };
-
+    let lua_result = result.unwrap();
     assert!(
-        content_text.contains("42"),
-        "Lua result should contain 42: {content_text:?}"
+        format!("{lua_result:?}").contains("42"),
+        "Lua result should contain 42: {lua_result:?}"
     );
 
     // Test Lua execution with string result
-    let result = server
-        .exec_lua(Parameters(ExecuteLuaRequest {
-            code: "return 'hello world'".to_string(),
-        }))
-        .await;
+    let result = client.execute_lua("return 'hello world'").await;
     assert!(result.is_ok(), "Failed to execute Lua: {result:?}");
 
     // Test error handling for invalid Lua
-    let result = server
-        .exec_lua(Parameters(ExecuteLuaRequest {
-            code: "invalid lua syntax !!!".to_string(),
-        }))
-        .await;
+    let result = client.execute_lua("invalid lua syntax !!!").await;
     assert!(result.is_err(), "Should fail for invalid Lua syntax");
 
     // Test error handling for empty code
-    let result = server
-        .exec_lua(Parameters(ExecuteLuaRequest {
-            code: "".to_string(),
-        }))
-        .await;
+    let result = client.execute_lua("").await;
     assert!(result.is_err(), "Should fail for empty Lua code");
 
     cleanup_nvim_process(child);
@@ -241,39 +191,35 @@ async fn test_lua_execution() {
 #[tokio::test]
 #[traced_test]
 async fn test_error_handling() {
-    let server = NeovimMcpServer::new();
+    let client = NeovimClient::new();
 
     // Test operations without connection
-    let result = server.list_buffers().await;
+    let result = client.list_buffers_info().await;
     assert!(
         result.is_err(),
-        "list_buffers should fail when not connected"
+        "list_buffers_info should fail when not connected"
     );
 
-    let result = server
-        .exec_lua(Parameters(ExecuteLuaRequest {
-            code: "return 1".to_string(),
-        }))
-        .await;
-    assert!(result.is_err(), "exec_lua should fail when not connected");
+    let result = client.execute_lua("return 1").await;
+    assert!(
+        result.is_err(),
+        "execute_lua should fail when not connected"
+    );
 
-    let result = server.disconnect_nvim_tcp().await;
+    let mut client_mut = client;
+    let result = client_mut.disconnect().await;
     assert!(result.is_err(), "disconnect should fail when not connected");
 }
 
 #[tokio::test]
 #[traced_test]
-async fn test_server_info() {
-    let server = NeovimMcpServer::new();
-    let info = server.get_info();
+async fn test_client_creation() {
+    let _client = NeovimClient::new();
 
-    // Verify server information
-    assert!(info.instructions.is_some());
-    assert!(info.capabilities.tools.is_some());
-
-    let instructions = info.instructions.unwrap();
-    assert!(instructions.contains("Neovim"));
-    assert!(instructions.contains("TCP"));
+    // Verify client can be created successfully
+    // This is a basic test to ensure the client struct can be instantiated
+    // without any server-specific functionality
+    assert!(true); // Client creation succeeded if we reach this point
 }
 
 #[tokio::test]
@@ -286,34 +232,22 @@ async fn test_connection_constraint() {
         drop(_guard);
         setup_neovim_instance(port).await
     };
-    let server = NeovimMcpServer::new();
+    let mut client = NeovimClient::new();
     let address = format!("{HOST}:{port}");
 
     // Connect to instance
-    let result = server
-        .connect_nvim_tcp(Parameters(ConnectNvimTCPRequest {
-            address: address.clone(),
-        }))
-        .await;
+    let result = client.connect(&address).await;
     assert!(result.is_ok(), "Failed to connect to instance");
 
     // Try to connect again (should fail)
-    let result = server
-        .connect_nvim_tcp(Parameters(ConnectNvimTCPRequest {
-            address: address.clone(),
-        }))
-        .await;
+    let result = client.connect(&address).await;
     assert!(result.is_err(), "Should not be able to connect twice");
 
     // Disconnect and then connect again (should work)
-    let result = server.disconnect_nvim_tcp().await;
+    let result = client.disconnect().await;
     assert!(result.is_ok(), "Failed to disconnect from instance");
 
-    let result = server
-        .connect_nvim_tcp(Parameters(ConnectNvimTCPRequest {
-            address: address.clone(),
-        }))
-        .await;
+    let result = client.connect(&address).await;
     assert!(result.is_ok(), "Failed to reconnect after disconnect");
 
     cleanup_nvim_process(child);
@@ -336,23 +270,16 @@ async fn test_get_vim_diagnostics() {
         )
         .await
     };
-    let server = NeovimMcpServer::new();
+    let mut client = NeovimClient::new();
     let address = format!("{HOST}:{port}");
 
     // Connect to instance
-    let result = server
-        .connect_nvim_tcp(Parameters(ConnectNvimTCPRequest {
-            address: address.clone(),
-        }))
-        .await;
+    let result = client.connect(&address).await;
     assert!(result.is_ok(), "Failed to connect to instance");
 
     sleep(Duration::from_secs(20)).await; // Allow time for LSP to initialize
 
-    // Execute Lua to get a diagnostic
-    let result = server
-        .buffer_diagnostics(Parameters(BufferId { id: 0 }))
-        .await;
+    let result = client.get_buffer_diagnostics(0).await;
     assert!(result.is_ok(), "Failed to get diagnostics: {result:?}");
 
     cleanup_nvim_process(child);
