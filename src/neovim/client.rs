@@ -40,7 +40,7 @@ impl Handler for NeovimHandler {
 #[derive(Debug, serde::Deserialize)]
 pub struct Diagnostic {
     pub message: String,
-    pub code: String,
+    pub code: Option<String>,
     pub severity: u8,
     pub lnum: u64,
     pub col: u64,
