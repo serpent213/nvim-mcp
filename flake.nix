@@ -69,11 +69,14 @@
               rustc = toolchain;
             };
             meta = builtins.fromTOML (builtins.readFile ./Cargo.toml);
-            inherit (meta.package) version;
+            inherit (meta.package) version name;
           in
             rustPlatform.buildRustPackage {
-              pname = "nvim-mcp";
+              pname = name;
               inherit version;
+              meta = {
+                mainProgram = name;
+              };
               src = ./.;
               cargoLock = {lockFile = ./Cargo.lock;};
               checkFlags = [
