@@ -2,7 +2,7 @@ use std::process::Command as StdCommand;
 use std::time::{Duration, Instant};
 
 use rmcp::{
-    model::CallToolRequestParam,
+    model::{CallToolRequestParam, ReadResourceRequestParam},
     serde_json::{Map, Value},
     service::ServiceExt,
     transport::{ConfigureCommandExt, TokioChildProcess},
@@ -652,6 +652,140 @@ async fn test_exec_lua_tool() -> Result<(), Box<dyn std::error::Error>> {
     cleanup_nvim_process(nvim_child);
     service.cancel().await?;
     info!("Exec Lua tool test completed successfully");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_list_diagnostic_resources() -> Result<(), Box<dyn std::error::Error>> {
+    info!("Starting MCP client to test diagnostic resources");
+
+    let service = ()
+        .serve(TokioChildProcess::new(Command::new("cargo").configure(
+            |cmd| {
+                cmd.args(["run", "--bin", "nvim-mcp"]);
+            },
+        ))?)
+        .await
+        .map_err(|e| {
+            error!("Failed to connect to server: {}", e);
+            e
+        })?;
+
+    // Test list_resources
+    let result = service.list_resources(None).await?;
+    info!("List resources result: {:#?}", result);
+
+    // Verify we have the workspace diagnostics resource
+    assert!(!result.resources.is_empty());
+
+    let workspace_resource = result
+        .resources
+        .iter()
+        .find(|r| r.raw.uri == "nvim-diagnostics://workspace");
+
+    assert!(
+        workspace_resource.is_some(),
+        "Should have workspace diagnostics resource"
+    );
+
+    if let Some(resource) = workspace_resource {
+        assert_eq!(resource.raw.name, "Workspace Diagnostics");
+        assert!(resource.raw.description.is_some());
+        assert_eq!(resource.raw.mime_type, Some("application/json".to_string()));
+    }
+
+    service.cancel().await?;
+    info!("List diagnostic resources test completed successfully");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_read_workspace_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
+    info!("Starting MCP client to test reading workspace diagnostics");
+
+    let service = ()
+        .serve(TokioChildProcess::new(Command::new("cargo").configure(
+            |cmd| {
+                cmd.args(["run", "--bin", "nvim-mcp"]);
+            },
+        ))?)
+        .await
+        .map_err(|e| {
+            error!("Failed to connect to server: {}", e);
+            e
+        })?;
+
+    // Start Neovim instance
+    let port = 6672;
+    let nvim_child = setup_test_neovim_instance(port).await?;
+    let address = format!("127.0.0.1:{port}");
+
+    // Connect to Neovim first
+    let mut connect_args = Map::new();
+    connect_args.insert("address".to_string(), Value::String(address));
+
+    let _connect_result = service
+        .call_tool(CallToolRequestParam {
+            name: "connect_nvim_tcp".into(),
+            arguments: Some(connect_args),
+        })
+        .await?;
+
+    // Test read workspace diagnostics resource
+    let result = service
+        .read_resource(ReadResourceRequestParam {
+            uri: "nvim-diagnostics://workspace".to_string(),
+        })
+        .await?;
+
+    info!("Read workspace diagnostics result: {:#?}", result);
+    assert!(!result.contents.is_empty());
+
+    // Verify the response contains diagnostic data
+    if let Some(_content) = result.contents.first() {
+        // Content received successfully - the actual parsing can be tested
+        // in more detailed unit tests if needed
+        info!("Successfully received resource content");
+    } else {
+        panic!("No content in workspace diagnostics result");
+    }
+
+    // Test reading invalid resource URI
+    let result = service
+        .read_resource(ReadResourceRequestParam {
+            uri: "nvim-diagnostics://invalid".to_string(),
+        })
+        .await;
+
+    assert!(result.is_err(), "Should fail for invalid resource URI");
+
+    // Test reading buffer diagnostics resource
+    let result = service
+        .read_resource(ReadResourceRequestParam {
+            uri: "nvim-diagnostics://buffer/1".to_string(),
+        })
+        .await?;
+
+    assert!(!result.contents.is_empty());
+    info!("Buffer diagnostics resource read successfully");
+
+    // Test invalid buffer ID
+    let result = service
+        .read_resource(ReadResourceRequestParam {
+            uri: "nvim-diagnostics://buffer/invalid".to_string(),
+        })
+        .await;
+
+    assert!(result.is_err(), "Should fail for invalid buffer ID");
+
+    // Cleanup
+    cleanup_nvim_process(nvim_child);
+    service.cancel().await?;
+    info!("Read workspace diagnostics test completed successfully");
 
     Ok(())
 }

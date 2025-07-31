@@ -266,14 +266,14 @@ async fn test_get_vim_diagnostics() {
     let result = client.connect(&address).await;
     assert!(result.is_ok(), "Failed to connect to instance");
 
-    sleep(Duration::from_secs(20)).await; // Allow time for LSP to initialize
-
     // Set up diagnostics and get diagnostics for buffer 0
     let result = client.setup_diagnostics_changed_autocmd().await;
     assert!(
         result.is_ok(),
         "Failed to setup diagnostics autocmd: {result:?}"
     );
+
+    sleep(Duration::from_secs(20)).await; // Allow time for LSP to initialize
 
     let result = client.get_buffer_diagnostics(0).await;
     assert!(result.is_ok(), "Failed to get diagnostics: {result:?}");

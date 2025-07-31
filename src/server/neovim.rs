@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, instrument};
 
-use crate::neovim::{NeovimClient, NeovimError};
+use crate::neovim::{Diagnostic, NeovimClient, NeovimError};
 
 impl From<NeovimError> for McpError {
     fn from(err: NeovimError) -> Self {
@@ -59,6 +59,8 @@ impl NeovimMcpServer {
         let mut client_guard = self.nvim_client.lock().await;
 
         client_guard.connect(&address).await?;
+
+        client_guard.setup_diagnostics_changed_autocmd().await?;
 
         Ok(CallToolResult::success(vec![Content::text(format!(
             "Connected to Neovim at {address}"
@@ -114,12 +116,24 @@ impl NeovimMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let client_guard = self.nvim_client.lock().await;
 
-        client_guard.setup_diagnostics_changed_autocmd().await?;
         let diagnostics = client_guard.get_buffer_diagnostics(id).await?;
 
         Ok(CallToolResult::success(vec![Content::text(format!(
             "Diagnostics for buffer ID {id}: {diagnostics:?}",
         ))]))
+    }
+
+    pub async fn get_buffer_diagnostics(
+        &self,
+        buffer_id: u64,
+    ) -> Result<Vec<Diagnostic>, McpError> {
+        let client_guard = self.nvim_client.lock().await;
+        Ok(client_guard.get_buffer_diagnostics(buffer_id).await?)
+    }
+
+    pub async fn get_workspace_diagnostics(&self) -> Result<Vec<Diagnostic>, McpError> {
+        let client_guard = self.nvim_client.lock().await;
+        Ok(client_guard.get_workspace_diagnostics().await?)
     }
 
     pub fn router(&self) -> &ToolRouter<Self> {

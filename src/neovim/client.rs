@@ -37,7 +37,7 @@ impl Handler for NeovimHandler {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct Diagnostic {
     pub message: String,
     pub code: Option<String>,
@@ -261,6 +261,42 @@ impl NeovimClient {
                     buffer_id, e
                 );
                 Err(NeovimError::Api(format!("Failed to get diagnostics: {e}")))
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    pub async fn get_workspace_diagnostics(&self) -> Result<Vec<Diagnostic>, NeovimError> {
+        debug!("Getting all workspace diagnostics");
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        match conn
+            .nvim
+            .execute_lua("return vim.json.encode(vim.diagnostic.get())", vec![])
+            .await
+        {
+            Ok(diagnostics) => {
+                let diagnostics: Vec<Diagnostic> =
+                    match serde_json::from_str(diagnostics.as_str().unwrap()) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            debug!("Failed to parse workspace diagnostics: {}", e);
+                            return Err(NeovimError::Api(format!(
+                                "Failed to parse workspace diagnostics: {e}"
+                            )));
+                        }
+                    };
+                debug!("Found {} workspace diagnostics", diagnostics.len());
+                Ok(diagnostics)
+            }
+            Err(e) => {
+                debug!("Failed to get workspace diagnostics: {}", e);
+                Err(NeovimError::Api(format!(
+                    "Failed to get workspace diagnostics: {e}"
+                )))
             }
         }
     }

@@ -5,5 +5,5 @@ mod error;
 #[cfg(test)]
 mod integration_tests;
 
-pub use client::NeovimClient;
+pub use client::{Diagnostic, NeovimClient};
 pub use error::NeovimError;
