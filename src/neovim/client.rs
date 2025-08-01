@@ -219,22 +219,23 @@ impl NeovimClient {
     }
 
     #[instrument(skip(self))]
-    pub async fn get_buffer_diagnostics(
+    async fn get_diagnostics(
         &self,
-        buffer_id: u64,
+        buffer_id: Option<u64>,
     ) -> Result<Vec<Diagnostic>, NeovimError> {
-        debug!("Getting diagnostics for buffer ID: {}", buffer_id);
-
         let conn = self.connection.as_ref().ok_or_else(|| {
             NeovimError::Connection("Not connected to any Neovim instance".to_string())
         })?;
 
+        let args = if let Some(id) = buffer_id {
+            vec![Value::from(id)]
+        } else {
+            vec![]
+        };
+
         match conn
             .nvim
-            .execute_lua(
-                format!("return vim.json.encode(vim.diagnostic.get({buffer_id}))").as_str(),
-                vec![],
-            )
+            .execute_lua("return vim.json.encode(vim.diagnostic.get(...))", args)
             .await
         {
             Ok(diagnostics) => {
@@ -248,56 +249,26 @@ impl NeovimClient {
                             )));
                         }
                     };
-                debug!(
-                    "Found {} diagnostics for buffer ID {}",
-                    diagnostics.len(),
-                    buffer_id
-                );
+                debug!("Found {} diagnostics", diagnostics.len());
                 Ok(diagnostics)
             }
             Err(e) => {
-                debug!(
-                    "Failed to get diagnostics for buffer ID {}: {}",
-                    buffer_id, e
-                );
+                debug!("Failed to get diagnostics: {}", e);
                 Err(NeovimError::Api(format!("Failed to get diagnostics: {e}")))
             }
         }
     }
 
     #[instrument(skip(self))]
+    pub async fn get_buffer_diagnostics(
+        &self,
+        buffer_id: u64,
+    ) -> Result<Vec<Diagnostic>, NeovimError> {
+        self.get_diagnostics(Some(buffer_id)).await
+    }
+
+    #[instrument(skip(self))]
     pub async fn get_workspace_diagnostics(&self) -> Result<Vec<Diagnostic>, NeovimError> {
-        debug!("Getting all workspace diagnostics");
-
-        let conn = self.connection.as_ref().ok_or_else(|| {
-            NeovimError::Connection("Not connected to any Neovim instance".to_string())
-        })?;
-
-        match conn
-            .nvim
-            .execute_lua("return vim.json.encode(vim.diagnostic.get())", vec![])
-            .await
-        {
-            Ok(diagnostics) => {
-                let diagnostics: Vec<Diagnostic> =
-                    match serde_json::from_str(diagnostics.as_str().unwrap()) {
-                        Ok(d) => d,
-                        Err(e) => {
-                            debug!("Failed to parse workspace diagnostics: {}", e);
-                            return Err(NeovimError::Api(format!(
-                                "Failed to parse workspace diagnostics: {e}"
-                            )));
-                        }
-                    };
-                debug!("Found {} workspace diagnostics", diagnostics.len());
-                Ok(diagnostics)
-            }
-            Err(e) => {
-                debug!("Failed to get workspace diagnostics: {}", e);
-                Err(NeovimError::Api(format!(
-                    "Failed to get workspace diagnostics: {e}"
-                )))
-            }
-        }
+        self.get_diagnostics(None).await
     }
 }
