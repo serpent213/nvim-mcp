@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, instrument};
 
-use crate::neovim::{Diagnostic, NeovimClient, NeovimError};
+use crate::neovim::{Diagnostic, NeovimClient, NeovimError, Position, Range};
 
 impl From<NeovimError> for McpError {
     fn from(err: NeovimError) -> Self {
@@ -38,6 +38,16 @@ pub struct ExecuteLuaRequest {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct BufferId {
     pub id: u64,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct BufferLSPParams {
+    pub id: u64,
+    pub lsp_client_name: String,
+    pub line: u64,
+    pub character: u64,
+    pub end_line: u64,
+    pub end_character: u64,
 }
 
 #[tool_router]
@@ -121,6 +131,38 @@ impl NeovimMcpServer {
         Ok(CallToolResult::success(vec![Content::text(format!(
             "Diagnostics for buffer ID {id}: {diagnostics:?}",
         ))]))
+    }
+
+    #[tool(description = "Get buffer's code actions")]
+    #[instrument(skip(self))]
+    pub async fn buffer_code_actions(
+        &self,
+        Parameters(BufferLSPParams {
+            id,
+            lsp_client_name,
+            line,
+            character,
+            end_line,
+            end_character,
+        }): Parameters<BufferLSPParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let client_guard = self.nvim_client.lock().await;
+
+        let actions = client_guard
+            .lsp_get_code_actions(
+                &lsp_client_name,
+                id,
+                Range {
+                    start: Position { line, character },
+                    end: Position {
+                        line: end_line,
+                        character: end_character,
+                    },
+                },
+            )
+            .await?;
+
+        Ok(CallToolResult::success(vec![Content::json(actions)?]))
     }
 
     pub async fn get_buffer_diagnostics(
