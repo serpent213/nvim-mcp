@@ -63,15 +63,15 @@ The server supports the following command-line options:
 The server provides the following MCP tools:
 
 - **`connect_nvim_tcp`**: Connect to a Neovim instance via TCP
-
   - Parameters: `address` (string) - TCP address (e.g., "127.0.0.1:6666")
 
 - **`disconnect_nvim_tcp`**: Disconnect from the current Neovim instance
 
 - **`list_buffers`**: List all open buffers with their names and line counts
 
-- **`buffer_diagnostics`**: Get diagnostics for a specific buffer
+- **`lsp_clients`**: Get workspace's LSP clients
 
+- **`buffer_diagnostics`**: Get diagnostics for a specific buffer
   - Parameters: `id` (number) - Buffer ID to get diagnostics for
 
 - **`exec_lua`**: Execute Lua code in Neovim

@@ -133,6 +133,16 @@ impl NeovimMcpServer {
         ))]))
     }
 
+    #[tool(description = "Get workspace's lsp clients")]
+    #[instrument(skip(self))]
+    pub async fn lsp_clients(&self) -> Result<CallToolResult, McpError> {
+        let client_guard = self.nvim_client.lock().await;
+
+        let clients = client_guard.lsp_get_clients().await?;
+
+        Ok(CallToolResult::success(vec![Content::json(clients)?]))
+    }
+
     #[tool(description = "Get buffer's code actions")]
     #[instrument(skip(self))]
     pub async fn buffer_code_actions(

@@ -766,7 +766,6 @@ impl NeovimClient {
         }
     }
 
-    #[allow(dead_code)]
     #[instrument(skip(self))]
     pub async fn lsp_get_clients(&self) -> Result<Vec<LspClient>, NeovimError> {
         debug!("Getting LSP clients");

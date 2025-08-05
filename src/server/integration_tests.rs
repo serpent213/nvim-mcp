@@ -123,6 +123,7 @@ async fn test_list_tools() -> Result<(), Box<dyn std::error::Error>> {
     assert!(tool_names.contains(&"connect_nvim_tcp"));
     assert!(tool_names.contains(&"disconnect_nvim_tcp"));
     assert!(tool_names.contains(&"list_buffers"));
+    assert!(tool_names.contains(&"lsp_clients"));
 
     // Verify tool descriptions are present
     for tool in &tools.tools {
@@ -424,8 +425,20 @@ async fn test_complete_workflow() -> Result<(), Box<dyn std::error::Error>> {
     assert!(!result.content.is_empty());
     info!("✓ Listed buffers successfully");
 
-    // Step 3: Disconnect
-    info!("Step 3: Disconnecting from Neovim");
+    // Step 3: Get LSP clients
+    info!("Step 3: Getting LSP clients");
+    let result = service
+        .call_tool(CallToolRequestParam {
+            name: "lsp_clients".into(),
+            arguments: None,
+        })
+        .await?;
+
+    assert!(!result.content.is_empty());
+    info!("✓ Got LSP clients successfully");
+
+    // Step 4: Disconnect
+    info!("Step 4: Disconnecting from Neovim");
     let result = service
         .call_tool(CallToolRequestParam {
             name: "disconnect_nvim_tcp".into(),
@@ -436,8 +449,8 @@ async fn test_complete_workflow() -> Result<(), Box<dyn std::error::Error>> {
     assert!(!result.content.is_empty());
     info!("✓ Disconnected successfully");
 
-    // Step 4: Verify we can't list buffers after disconnect
-    info!("Step 4: Verifying disconnect");
+    // Step 5: Verify we can't list buffers after disconnect
+    info!("Step 5: Verifying disconnect");
     let result = service
         .call_tool(CallToolRequestParam {
             name: "list_buffers".into(),
@@ -652,6 +665,80 @@ async fn test_exec_lua_tool() -> Result<(), Box<dyn std::error::Error>> {
     cleanup_nvim_process(nvim_child);
     service.cancel().await?;
     info!("Exec Lua tool test completed successfully");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_lsp_clients_tool() -> Result<(), Box<dyn std::error::Error>> {
+    info!("Starting MCP client to test nvim-mcp server");
+
+    let service = ()
+        .serve(TokioChildProcess::new(Command::new("cargo").configure(
+            |cmd| {
+                cmd.args(["run", "--bin", "nvim-mcp"]);
+            },
+        ))?)
+        .await
+        .map_err(|e| {
+            error!("Failed to connect to server: {}", e);
+            e
+        })?;
+
+    // Test lsp_clients without connection (should fail)
+    let result = service
+        .call_tool(CallToolRequestParam {
+            name: "lsp_clients".into(),
+            arguments: None,
+        })
+        .await;
+
+    assert!(
+        result.is_err(),
+        "lsp_clients should fail when not connected"
+    );
+
+    // Now connect first, then test lsp_clients
+    let port = 6673;
+    let nvim_child = setup_test_neovim_instance(port).await?;
+
+    let address = format!("127.0.0.1:{port}");
+
+    // Connect first
+    let mut connect_args = Map::new();
+    connect_args.insert("address".to_string(), Value::String(address));
+
+    let _connect_result = service
+        .call_tool(CallToolRequestParam {
+            name: "connect_nvim_tcp".into(),
+            arguments: Some(connect_args),
+        })
+        .await?;
+
+    // Now test lsp_clients
+    let result = service
+        .call_tool(CallToolRequestParam {
+            name: "lsp_clients".into(),
+            arguments: None,
+        })
+        .await?;
+
+    info!("LSP clients result: {:#?}", result);
+    assert!(!result.content.is_empty());
+
+    // Verify the response contains content
+    if let Some(_content) = result.content.first() {
+        // Content received successfully - the JSON parsing is handled by the MCP framework
+        info!("LSP clients content received successfully");
+    } else {
+        panic!("No content in lsp_clients result");
+    }
+
+    // Cleanup
+    cleanup_nvim_process(nvim_child);
+    service.cancel().await?;
+    info!("LSP clients tool test completed successfully");
 
     Ok(())
 }
