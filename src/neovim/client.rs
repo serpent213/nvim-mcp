@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use nvim_rs::{Handler, Neovim, compat::tokio::Compat, create::tokio as create};
 use rmpv::Value;
@@ -36,7 +38,6 @@ impl Handler for NeovimHandler {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct Diagnostic {
     pub message: String,
@@ -49,7 +50,416 @@ pub struct Diagnostic {
     pub end_lnum: u64,
     pub end_col: u64,
     pub namespace: u64,
-    pub user_data: serde_json::Value,
+    pub user_data: UserData,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct UserData {
+    pub lsp: LSPDiagnostic,
+    #[serde(flatten)]
+    pub unknowns: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct LSPDiagnostic {
+    pub code: Option<String>,
+    pub message: String,
+    pub range: Range,
+    pub severity: u8,
+    pub source: String,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct LspClient {
+    pub id: u64,
+    pub name: String,
+}
+
+/**
+* Text documents are identified using a URI.
+* On the protocol level, URIs are passed as strings.
+*/
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct TextDocumentIdentifier {
+    /**
+     * The text document's URI.
+     */
+    uri: String,
+    /**
+     * The version number of this document. If an optional versioned text document
+     * identifier is sent from the server to the client and the file is not
+     * open in the editor (the server has not received an open notification
+     * before) the server can send `null` to indicate that the version is
+     * known and the content on disk is the master (as specified with document
+     * content ownership).
+     *
+     * The version number of a document will increase after each change,
+     * including undo/redo. The number doesn't need to be consecutive.
+     */
+    version: Option<i32>,
+}
+
+/**
+* Position in a text document expressed as zero-based line and zero-based character offset.
+* A position is between two characters like an ‘insert’ cursor in an editor.
+*/
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct Position {
+    /**
+     * Line position in a document (zero-based).
+     */
+    pub line: u64,
+    /**
+     * Character offset on a line in a document (zero-based). The meaning of this
+     * offset is determined by the negotiated `PositionEncodingKind`.
+     *
+     * If the character value is greater than the line length it defaults back
+     * to the line length.
+     */
+    pub character: u64,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct Range {
+    /**
+     * The range's start position.
+     */
+    pub start: Position,
+    /**
+     * The range's end position.
+     */
+    pub end: Position,
+}
+
+/**
+ * The kind of a code action.
+ *
+ * Kinds are a hierarchical list of identifiers separated by `.`,
+ * e.g. `"refactor.extract.function"`.
+ *
+ * The set of kinds is open and client needs to announce the kinds it supports
+ * to the server during initialization.
+ */
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CodeActionKind {
+    /**
+     * Empty kind.
+     */
+    #[serde(rename = "")]
+    Empty,
+    /**
+     * Base kind for quickfix actions: 'quickfix'.
+     */
+    #[serde(rename = "quickfix")]
+    Quickfix,
+    /**
+     * Base kind for refactoring actions: 'refactor'.
+     */
+    Refactor,
+    /**
+     * Base kind for refactoring extraction actions: 'refactor.extract'.
+     *
+     * Example extract actions:
+     *
+     * - Extract method
+     * - Extract function
+     * - Extract variable
+     * - Extract interface from class
+     * - ...
+     */
+    #[serde(rename = "refactor.extract")]
+    RefactorExtract,
+    /**
+     * Base kind for refactoring inline actions: 'refactor.inline'.
+     *
+     * Example inline actions:
+     *
+     * - Inline function
+     * - Inline variable
+     * - Inline constant
+     * - ...
+     */
+    #[serde(rename = "refactor.inline")]
+    RefactorInline,
+    /**
+     * Base kind for refactoring rewrite actions: 'refactor.rewrite'.
+     *
+     * Example rewrite actions:
+     *
+     * - Convert JavaScript function to class
+     * - Add or remove parameter
+     * - Encapsulate field
+     * - Make method static
+     * - Move method to base class
+     * - ...
+     */
+    #[serde(rename = "refactor.rewrite")]
+    RefactorRewrite,
+    /**
+     * Base kind for source actions: `source`.
+     *
+     * Source code actions apply to the entire file.
+     */
+    Source,
+    /**
+     * Base kind for an organize imports source action:
+     * `source.organizeImports`.
+     */
+    #[serde(rename = "source.organizeImports")]
+    SourceOrganizeImports,
+    /**
+     * Base kind for a 'fix all' source action: `source.fixAll`.
+     *
+     * 'Fix all' actions automatically fix errors that have a clear fix that
+     * do not require user input. They should not suppress errors or perform
+     * unsafe fixes such as generating new types or classes.
+     *
+     * @since 3.17.0
+     */
+    #[serde(rename = "source.fixAll")]
+    SourceFixAll,
+}
+
+/**
+ * The reason why code actions were requested.
+ *
+ * @since 3.17.0
+ */
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub enum CodeActionTriggerKind {
+    /**
+     * Code actions were explicitly requested by the user or by an extension.
+     */
+    Invoked = 1,
+    /**
+     * Code actions were requested automatically.
+     *
+     * This typically happens when current selection in a file changes, but can
+     * also be triggered when file content changes.
+     */
+    Automatic = 2,
+}
+/**
+ * Contains additional diagnostic information about the context in which
+ * a code action is run.
+ */
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeActionContext {
+    /**
+     * Requested kind of actions to return.
+     *
+     * Actions not of this kind are filtered out by the client before being
+     * shown. So servers can omit computing them.
+     */
+    only: Option<Vec<CodeActionKind>>,
+    /**
+     * An array of diagnostics known on the client side overlapping the range
+     * provided to the `textDocument/codeAction` request. They are provided so
+     * that the server knows which errors are currently presented to the user
+     * for the given range. There is no guarantee that these accurately reflect
+     * the error state of the resource. The primary parameter
+     * to compute code actions is the provided range.
+     */
+    diagnostics: Vec<LSPDiagnostic>,
+    /**
+     * The reason why code actions were requested.
+     *
+     * @since 3.17.0
+     */
+    trigger_kind: Option<CodeActionTriggerKind>,
+}
+
+/**
+ * Params for the CodeActionRequest
+ */
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeActionParams {
+    /**
+     * The document in which the command was invoked.
+     */
+    pub text_document: TextDocumentIdentifier,
+    /**
+     * The range for which the command was invoked.
+     */
+    pub range: Range,
+    /**
+     * Context carrying additional information.
+     */
+    pub context: CodeActionContext,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct Disabled {
+    /**
+     * Human readable description of why the code action is currently
+     * disabled.
+     *
+     * This is displayed in the code actions UI.
+     */
+    reason: String,
+}
+
+/*
+* A textual edit applicable to a text document.
+*/
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextEdit {
+    /**
+     * The range of the text document to be manipulated. To insert
+     * text into a document create a range where start === end.
+     */
+    range: Range,
+    /**
+     * The string to be inserted. For delete operations use an
+     * empty string.
+     */
+    new_text: String,
+    /**
+     * The actual annotation identifier.
+     */
+    annotation_id: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceEdit {
+    /**
+     * Holds changes to existing resources.
+     */
+    changes: Option<std::collections::HashMap<String, Vec<TextEdit>>>,
+
+    /**
+     * Depending on the client capability
+     * `workspace.workspaceEdit.resourceOperations` document changes are either
+     * an array of `TextDocumentEdit`s to express changes to n different text
+     * documents where each text document edit addresses a specific version of
+     * a text document. Or it can contain above `TextDocumentEdit`s mixed with
+     * create, rename and delete file / folder operations.
+     *
+     * Whether a client supports versioned document edits is expressed via
+     * `workspace.workspaceEdit.documentChanges` client capability.
+     *
+     * If a client neither supports `documentChanges` nor
+     * `workspace.workspaceEdit.resourceOperations` then only plain `TextEdit`s
+     * using the `changes` property are supported.
+     */
+    document_changes: Option<Vec<serde_json::Value>>,
+    /**
+     * A map of change annotations that can be referenced in
+     * `AnnotatedTextEdit`s or create, rename and delete file / folder
+     * operations.
+     *
+     * Whether clients honor this property depends on the client capability
+     * `workspace.changeAnnotationSupport`.
+     *
+     * @since 3.16.0
+     */
+    change_annotations: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct Command {
+    /**
+     * Title of the command, like `save`.
+     */
+    title: String,
+    /**
+     * The identifier of the actual command handler.
+     */
+    command: String,
+    /**
+     * Arguments that the command handler should be
+     * invoked with.
+     */
+    arguments: Vec<serde_json::Value>,
+}
+
+/**
+ * A code action represents a change that can be performed in code, e.g. to fix
+ * a problem or to refactor code.
+ *
+ * A CodeAction must set either `edit` and/or a `command`. If both are supplied,
+ * the `edit` is applied first, then the `command` is executed.
+ */
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeAction {
+    /**
+     * A short, human-readable, title for this code action.
+     */
+    title: String,
+
+    /**
+     * The kind of the code action.
+     *
+     * Used to filter code actions.
+     */
+    kind: Option<CodeActionKind>,
+
+    /**
+     * The diagnostics that this code action resolves.
+     */
+    diagnostics: Option<Vec<LSPDiagnostic>>,
+    /**
+     * Marks this as a preferred action. Preferred actions are used by the
+     * `auto fix` command and can be targeted by keybindings.
+     *
+     * A quick fix should be marked preferred if it properly addresses the
+     * underlying error. A refactoring should be marked preferred if it is the
+     * most reasonable choice of actions to take.
+     *
+     * @since 3.15.0
+     */
+    is_preferred: Option<bool>,
+    /**
+     * Marks that the code action cannot currently be applied.
+     *
+     * Clients should follow the following guidelines regarding disabled code
+     * actions:
+     *
+     * - Disabled code actions are not shown in automatic lightbulbs code
+     *   action menus.
+     *
+     * - Disabled actions are shown as faded out in the code action menu when
+     *   the user request a more specific type of code action, such as
+     *   refactorings.
+     *
+     * - If the user has a keybinding that auto applies a code action and only
+     *   a disabled code actions are returned, the client should show the user
+     *   an error message with `reason` in the editor.
+     *
+     * @since 3.16.0
+     */
+    disabled: Option<Disabled>,
+
+    /**
+     * The workspace edit this code action performs.
+     */
+    edit: Option<WorkspaceEdit>,
+
+    /**
+     * A command this code action executes. If a code action
+     * provides an edit and a command, first the edit is
+     * executed and then the command.
+     */
+    command: Option<Command>,
+
+    /**
+     * A data entry field that is preserved on a code action between
+     * a `textDocument/codeAction` and a `codeAction/resolve` request.
+     *
+     * @since 3.16.0
+     */
+    data: Option<serde_json::Value>,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct CodeActionResult {
+    pub result: Vec<CodeAction>,
 }
 
 pub struct NeovimClient {
@@ -184,28 +594,7 @@ impl NeovimClient {
 
         match conn
             .nvim
-            .exec_lua(
-                r#"
-                    local group = vim.api.nvim_create_augroup("NVIM_MCP_DiagnosticsChanged", { clear = true })
-                    vim.api.nvim_create_autocmd("DiagnosticChanged", {
-                        group = group,
-                        callback = function(args)
-                            vim.rpcnotify(0, "NVIM_MCP_DiagnosticsChanged", {
-                                buf = args.buf,
-                                diagnostics = args.data.diagnostics,
-                            })
-                        end
-                    })
-                    vim.api.nvim_create_autocmd("LspAttach", {
-                        group = group,
-                        callback = function(args)
-                            vim.rpcnotify(0, "NVIM_MCP_LspAttach", args.data.diagnostics)
-                        end
-                    })
-                    vim.rpcnotify(0, "NVIM_MCP", "setup diagnostics changed autocmd")
-                "#,
-                vec![],
-            )
+            .exec_lua(include_str!("lua/diagnostics_autocmd.lua"), vec![])
             .await
         {
             Ok(_) => {
@@ -273,5 +662,141 @@ impl NeovimClient {
     #[instrument(skip(self))]
     pub async fn get_workspace_diagnostics(&self) -> Result<Vec<Diagnostic>, NeovimError> {
         self.get_diagnostics(None).await
+    }
+
+    #[allow(dead_code)]
+    async fn lsp_make_text_document_params(
+        &self,
+        buffer_id: u64,
+    ) -> Result<TextDocumentIdentifier, NeovimError> {
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        match conn
+            .nvim
+            .execute_lua(
+                include_str!("lua/lsp_make_text_document_params.lua"),
+                vec![Value::from(buffer_id)],
+            )
+            .await
+        {
+            Ok(raw) => {
+                let doc = serde_json::from_str::<TextDocumentIdentifier>(raw.as_str().unwrap())
+                    .map_err(|e| {
+                        NeovimError::Api(format!("Failed to parse text document params: {e}"))
+                    })?;
+                info!("Created text document params {doc:?} for buffer {buffer_id}");
+                Ok(doc)
+            }
+            Err(e) => {
+                debug!("Failed to make text document params: {}", e);
+                Err(NeovimError::Api(format!(
+                    "Failed to make text document params: {e}"
+                )))
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    #[instrument(skip(self))]
+    pub async fn lsp_get_code_actions(
+        &self,
+        client_name: &str,
+        buffer_id: u64,
+        range: Range,
+    ) -> Result<Vec<CodeAction>, NeovimError> {
+        let diagnostics = self
+            .get_buffer_diagnostics(buffer_id)
+            .await
+            .map_err(|e| NeovimError::Api(format!("Failed to get diagnostics: {e}")))?;
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        match conn
+            .nvim
+            .execute_lua(
+                include_str!("lua/lsp_client_get_code_actions.lua"),
+                vec![
+                    Value::from(client_name), // client_name
+                    Value::from(
+                        serde_json::to_string(&CodeActionParams {
+                            text_document: self
+                                .lsp_make_text_document_params(buffer_id)
+                                .await
+                                .map_err(|e| {
+                                    NeovimError::Api(format!(
+                                        "Failed to make text document params: {e}"
+                                    ))
+                                })?,
+                            range,
+                            context: CodeActionContext {
+                                diagnostics: diagnostics
+                                    .into_iter()
+                                    .map(|d| d.user_data.lsp)
+                                    .collect(),
+                                only: None,
+                                trigger_kind: None,
+                            },
+                        })
+                        .unwrap(),
+                    ), // params
+                    Value::from(1000),        // timeout_ms
+                    Value::from(buffer_id),   // bufnr
+                ],
+            )
+            .await
+        {
+            Ok(actions) => {
+                let actions = serde_json::from_str::<CodeActionResult>(actions.as_str().unwrap())
+                    .map_err(|e| {
+                    NeovimError::Api(format!("Failed to parse code actions: {e}"))
+                })?;
+                debug!("Found {} code actions", actions.result.len());
+                Ok(actions.result)
+            }
+            Err(e) => {
+                debug!("Failed to get LSP code actions: {}", e);
+                Err(NeovimError::Api(format!(
+                    "Failed to get LSP code actions: {e}"
+                )))
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    #[instrument(skip(self))]
+    pub async fn lsp_get_clients(&self) -> Result<Vec<LspClient>, NeovimError> {
+        debug!("Getting LSP clients");
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        match conn
+            .nvim
+            .execute_lua(include_str!("lua/lsp_get_clients.lua"), vec![])
+            .await
+        {
+            Ok(clients) => {
+                debug!("LSP clients retrieved successfully");
+                let clients: Vec<LspClient> = match serde_json::from_str(clients.as_str().unwrap())
+                {
+                    Ok(d) => d,
+                    Err(e) => {
+                        debug!("Failed to parse clients: {}", e);
+                        return Err(NeovimError::Api(format!("Failed to parse clients: {e}")));
+                    }
+                };
+                debug!("Found {} clients", clients.len());
+                Ok(clients)
+            }
+            Err(e) => {
+                debug!("Failed to get LSP clients: {}", e);
+                Err(NeovimError::Api(format!("Failed to get LSP clients: {e}")))
+            }
+        }
     }
 }

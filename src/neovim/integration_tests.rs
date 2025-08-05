@@ -4,9 +4,11 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use tokio::time::sleep;
+use tracing::info;
 use tracing_test::traced_test;
 
 use crate::neovim::NeovimClient;
+use crate::neovim::client::{Position, Range};
 
 const HOST: &str = "127.0.0.1";
 const PORT_BASE: u16 = 7777;
@@ -279,4 +281,42 @@ async fn test_get_vim_diagnostics() {
     assert!(result.is_ok(), "Failed to get diagnostics: {result:?}");
 
     cleanup_nvim_process(child);
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_code_action() {
+    let port = 6666;
+
+    let mut client = NeovimClient::new();
+    let address = format!("{HOST}:{port}");
+
+    // Connect to instance
+    let result = client.connect(&address).await;
+    assert!(result.is_ok(), "Failed to connect to instance");
+
+    let result = client.get_buffer_diagnostics(0).await;
+    assert!(result.is_ok(), "Failed to get diagnostics: {result:?}");
+    let result = result.unwrap();
+    info!("Diagnostics: {:?}", result);
+
+    let diagnostic = result.first().expect("Failed to get any diagnostics");
+    let result = client
+        .lsp_get_code_actions(
+            "luals",
+            0,
+            Range {
+                start: Position {
+                    line: diagnostic.lnum,
+                    character: diagnostic.col,
+                },
+                end: Position {
+                    line: diagnostic.end_lnum,
+                    character: diagnostic.end_col,
+                },
+            },
+        )
+        .await;
+    assert!(result.is_ok(), "Failed to get code actions: {result:?}");
+    info!("Code actions: {:?}", result);
 }
