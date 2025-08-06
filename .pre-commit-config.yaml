@@ -28,6 +28,12 @@ repos:
       - id: cargo-check
         args: ["--all-targets", "--all-features"]
 
+  # Lua-specific hooks
+  - repo: https://github.com/JohnnyMorganz/StyLua
+    rev: v2.1.0
+    hooks:
+      - id: stylua # or stylua-system / stylua-github
+
 # Configuration for specific hooks
 default_stages: [pre-commit]
 fail_fast: false

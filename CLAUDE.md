@@ -7,8 +7,10 @@ with code in this repository.
 
 This is a Rust-based Model Context Protocol (MCP) server that provides AI
 assistants with programmatic access to Neovim instances via TCP connections.
-The server implements four core tools: TCP connection management, buffer
-listing, and Lua code execution.
+The server implements seven core tools: TCP connection management, buffer
+listing, diagnostics access, LSP client integration, code actions, and Lua
+code execution. It also provides MCP resources for diagnostic information
+through the `nvim-diagnostics://` URI scheme.
 
 ## Development Commands
 
@@ -59,9 +61,16 @@ The codebase follows a layered architecture:
 ### Core Components
 
 - **`src/server/neovim.rs`**: Main MCP server implementation (`NeovimMcpServer`)
-  - Manages TCP connections to Neovim via `Arc<Mutex<Option<NeovimConnection>>>`
-  - Implements four MCP tools using the `#[tool]` attribute
+  - Manages connections to Neovim via
+    `Arc<Mutex<Option<Box<dyn NeovimClientTrait + Send>>>>`
+  - Implements seven MCP tools using the `#[tool]` attribute
   - Handles connection lifecycle and tool routing
+
+- **`src/neovim/client.rs`**: Neovim client abstraction layer
+  - Implements `NeovimClientTrait` for unified client interface
+  - Supports both TCP and Unix socket/named pipe connections
+  - Provides high-level operations: buffer management, diagnostics, LSP integration
+  - Handles Lua code execution and autocmd setup
 
 - **`src/neovim/connection.rs`**: Connection management layer
   - Wraps `nvim-rs` client with lifecycle management
@@ -69,13 +78,17 @@ The codebase follows a layered architecture:
 
 - **`src/server/neovim_handler.rs`**: MCP protocol handler
   - Implements `ServerHandler` trait for MCP capabilities
-  - Provides server metadata and tool discovery
+  - Provides server metadata, tool discovery, and resource handling
+  - Supports `nvim-diagnostics://` URI scheme for diagnostic resources
 
 ### Data Flow
 
 1. **MCP Communication**: stdio transport ↔ MCP client ↔ `NeovimMcpServer`
-2. **Neovim Integration**: `NeovimMcpServer` → `nvim-rs` → TCP → Neovim instance
+2. **Neovim Integration**: `NeovimMcpServer` → `NeovimClientTrait` → `nvim-rs` →
+   TCP/Unix socket → Neovim instance
 3. **Tool Execution**: MCP tool request → async Neovim API call → response
+4. **Resource Access**: MCP resource request → diagnostic data retrieval →
+   structured JSON response
 
 ### Connection Management
 
@@ -83,6 +96,29 @@ The codebase follows a layered architecture:
 - Thread-safe access using `Arc<Mutex<>>`
 - Proper cleanup of TCP connections and background tasks
 - Connection validation before tool execution
+
+### Available MCP Tools
+
+The server provides these tools:
+
+1. **`connect_nvim`**: Connect via Unix socket/named pipe
+2. **`connect_nvim_tcp`**: Connect via TCP address
+3. **`disconnect_nvim_tcp`**: Disconnect from current Neovim instance
+4. **`list_buffers`**: List all open buffers with details
+5. **`exec_lua`**: Execute arbitrary Lua code in Neovim
+6. **`buffer_diagnostics`**: Get diagnostics for specific buffer
+7. **`lsp_clients`**: Get workspace LSP clients
+8. **`buffer_code_actions`**: Get LSP code actions for buffer range
+
+### MCP Resources
+
+The server provides diagnostic resources via `nvim-diagnostics://` URI scheme:
+
+- **`nvim-diagnostics://workspace`**: All diagnostic messages across workspace
+- **`nvim-diagnostics://buffer/{buffer_id}`**: Diagnostics for specific buffer
+
+Resources return structured JSON with diagnostic information including severity,
+messages, file paths, and line/column positions.
 
 ## Key Dependencies
 
@@ -128,3 +164,15 @@ The flake provides:
 Use `nix develop .` to enter the development shell (only if `IN_NIX_SHELL` is
 not already set) or set up direnv with `echo 'use flake' > .envrc` for
 automatic environment activation.
+
+## Neovim Lua Plugin
+
+The project includes a Neovim Lua plugin at `lua/nvim-mcp/init.lua` that:
+
+- Automatically starts a Neovim RPC server on a Unix socket/named pipe
+- Generates unique pipe paths based on git root and process ID
+- Provides a `setup()` function for initialization
+- Enables seamless MCP server connection without manual TCP setup
+
+This eliminates the need to manually start Neovim with `--listen` for MCP
+server connections.
