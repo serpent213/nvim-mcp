@@ -3,12 +3,13 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use tokio::net::TcpStream;
 use tokio::time::sleep;
 use tracing::info;
 use tracing_test::traced_test;
 
-use crate::neovim::NeovimClient;
 use crate::neovim::client::{Position, Range};
+use crate::neovim::{NeovimClient, NeovimClientTrait};
 
 const HOST: &str = "127.0.0.1";
 const PORT_BASE: u16 = 7777;
@@ -70,12 +71,12 @@ fn cleanup_nvim_process(mut child: std::process::Child) {
     }
 }
 
-async fn setup_connected_client(port: u16) -> (NeovimClient, std::process::Child) {
+async fn setup_connected_client(port: u16) -> (impl NeovimClientTrait, std::process::Child) {
     let child = setup_neovim_instance(port).await;
     let mut client = NeovimClient::new();
     let address = format!("{HOST}:{port}");
 
-    let result = client.connect(&address).await;
+    let result = client.connect_tcp(&address).await;
     if result.is_err() {
         cleanup_nvim_process(child);
         panic!("Failed to connect to Neovim: {result:?}");
@@ -93,7 +94,7 @@ fn get_testdata_path(filename: &str) -> PathBuf {
 
 #[tokio::test]
 #[traced_test]
-async fn test_connection_lifecycle() {
+async fn test_tcp_connection_lifecycle() {
     let port = PORT_BASE;
     let address = format!("{HOST}:{port}");
 
@@ -105,11 +106,11 @@ async fn test_connection_lifecycle() {
     let mut client = NeovimClient::new();
 
     // Test connection
-    let result = client.connect(&address).await;
+    let result = client.connect_tcp(&address).await;
     assert!(result.is_ok(), "Failed to connect: {result:?}");
 
     // Test that we can't connect again while already connected
-    let result = client.connect(&address).await;
+    let result = client.connect_tcp(&address).await;
     assert!(result.is_err(), "Should not be able to connect twice");
 
     // Test disconnect
@@ -193,7 +194,7 @@ async fn test_lua_execution() {
 #[tokio::test]
 #[traced_test]
 async fn test_error_handling() {
-    let client = NeovimClient::new();
+    let client = NeovimClient::<TcpStream>::new();
 
     // Test operations without connection
     let result = client.list_buffers_info().await;
@@ -227,18 +228,18 @@ async fn test_connection_constraint() {
     let address = format!("{HOST}:{port}");
 
     // Connect to instance
-    let result = client.connect(&address).await;
+    let result = client.connect_tcp(&address).await;
     assert!(result.is_ok(), "Failed to connect to instance");
 
     // Try to connect again (should fail)
-    let result = client.connect(&address).await;
+    let result = client.connect_tcp(&address).await;
     assert!(result.is_err(), "Should not be able to connect twice");
 
     // Disconnect and then connect again (should work)
     let result = client.disconnect().await;
     assert!(result.is_ok(), "Failed to disconnect from instance");
 
-    let result = client.connect(&address).await;
+    let result = client.connect_tcp(&address).await;
     assert!(result.is_ok(), "Failed to reconnect after disconnect");
 
     cleanup_nvim_process(child);
@@ -265,7 +266,7 @@ async fn test_get_vim_diagnostics() {
     let address = format!("{HOST}:{port}");
 
     // Connect to instance
-    let result = client.connect(&address).await;
+    let result = client.connect_tcp(&address).await;
     assert!(result.is_ok(), "Failed to connect to instance");
 
     // Set up diagnostics and get diagnostics for buffer 0
@@ -292,7 +293,7 @@ async fn test_code_action() {
     let address = format!("{HOST}:{port}");
 
     // Connect to instance
-    let result = client.connect(&address).await;
+    let result = client.connect_tcp(&address).await;
     assert!(result.is_ok(), "Failed to connect to instance");
 
     let result = client.get_buffer_diagnostics(0).await;

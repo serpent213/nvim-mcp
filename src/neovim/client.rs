@@ -1,26 +1,77 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use nvim_rs::{Handler, Neovim, compat::tokio::Compat, create::tokio as create};
+use nvim_rs::{Handler, Neovim, create::tokio as create};
 use rmpv::Value;
-use tokio::net::TcpStream;
+use tokio::{io::AsyncWrite, net::TcpStream};
 use tracing::{debug, info, instrument};
 
 use super::{connection::NeovimConnection, error::NeovimError};
 
-#[derive(Clone)]
-pub struct NeovimHandler;
+/// Common trait for Neovim client operations
+#[async_trait]
+pub trait NeovimClientTrait {
+    /// Get the target of the Neovim connection
+    fn target(&self) -> Option<String>;
+
+    /// Disconnect from the current Neovim instance
+    async fn disconnect(&mut self) -> Result<String, NeovimError>;
+
+    /// List information about all buffers
+    async fn list_buffers_info(&self) -> Result<Vec<String>, NeovimError>;
+
+    /// Execute Lua code in Neovim
+    async fn execute_lua(&self, code: &str) -> Result<Value, NeovimError>;
+
+    /// Set up diagnostics changed autocmd
+    async fn setup_diagnostics_changed_autocmd(&self) -> Result<(), NeovimError>;
+
+    /// Get diagnostics for a specific buffer
+    async fn get_buffer_diagnostics(&self, buffer_id: u64) -> Result<Vec<Diagnostic>, NeovimError>;
+
+    /// Get diagnostics for the entire workspace
+    async fn get_workspace_diagnostics(&self) -> Result<Vec<Diagnostic>, NeovimError>;
+
+    /// Get LSP clients
+    async fn lsp_get_clients(&self) -> Result<Vec<LspClient>, NeovimError>;
+
+    /// Get LSP code actions for a buffer range
+    async fn lsp_get_code_actions(
+        &self,
+        client_name: &str,
+        buffer_id: u64,
+        range: Range,
+    ) -> Result<Vec<CodeAction>, NeovimError>;
+}
+
+pub struct NeovimHandler<T> {
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T> NeovimHandler<T> {
+    pub fn new() -> Self {
+        NeovimHandler {
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T> Clone for NeovimHandler<T> {
+    fn clone(&self) -> Self {
+        NeovimHandler {
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
 
 #[async_trait]
-impl Handler for NeovimHandler {
-    type Writer = Compat<tokio::io::WriteHalf<TcpStream>>;
+impl<T> Handler for NeovimHandler<T>
+where
+    T: futures::AsyncWrite + Send + Sync + Unpin + 'static,
+{
+    type Writer = T;
 
-    async fn handle_notify(
-        &self,
-        name: String,
-        args: Vec<Value>,
-        _neovim: Neovim<Compat<tokio::io::WriteHalf<TcpStream>>>,
-    ) {
+    async fn handle_notify(&self, name: String, args: Vec<Value>, _neovim: Neovim<T>) {
         info!("handling notification: {name:?}, {args:?}");
     }
 
@@ -28,7 +79,7 @@ impl Handler for NeovimHandler {
         &self,
         name: String,
         args: Vec<Value>,
-        _neovim: Neovim<Compat<tokio::io::WriteHalf<TcpStream>>>,
+        _neovim: Neovim<T>,
     ) -> Result<Value, Value> {
         info!("handling request: {name:?}, {args:?}");
         match name.as_ref() {
@@ -462,26 +513,65 @@ pub struct CodeActionResult {
     pub result: Vec<CodeAction>,
 }
 
-pub struct NeovimClient {
-    connection: Option<NeovimConnection>,
+pub struct NeovimClient<T>
+where
+    T: AsyncWrite + Send + 'static,
+{
+    connection: Option<NeovimConnection<T>>,
 }
 
-impl NeovimClient {
-    pub fn new() -> Self {
-        Self { connection: None }
-    }
+#[cfg(unix)]
+type Connection = tokio::net::UnixStream;
+#[cfg(windows)]
+type Connection = tokio::net::windows::named_pipe::NamedPipeClient;
 
+impl NeovimClient<Connection> {
     #[instrument(skip(self))]
-    pub async fn connect(&mut self, address: &str) -> Result<(), NeovimError> {
+    pub async fn connect_path(&mut self, path: &str) -> Result<(), NeovimError> {
         if self.connection.is_some() {
             return Err(NeovimError::Connection(format!(
                 "Already connected to {}. Disconnect first.",
-                self.connection.as_ref().unwrap().address()
+                self.connection.as_ref().unwrap().target()
+            )));
+        }
+
+        debug!("Attempting to connect to Neovim at {}", path);
+        let handler = NeovimHandler::new();
+        match create::new_path(path, handler).await {
+            Ok((nvim, io_handler)) => {
+                let connection = NeovimConnection::new(
+                    nvim,
+                    tokio::spawn(async move {
+                        let rv = io_handler.await;
+                        info!("io_handler completed with result: {:?}", rv);
+                        rv
+                    }),
+                    path.to_string(),
+                );
+                self.connection = Some(connection);
+                debug!("Successfully connected to Neovim at {}", path);
+                Ok(())
+            }
+            Err(e) => {
+                debug!("Failed to connect to Neovim at {}: {}", path, e);
+                Err(NeovimError::Connection(format!("Connection failed: {e}")))
+            }
+        }
+    }
+}
+
+impl NeovimClient<TcpStream> {
+    #[instrument(skip(self))]
+    pub async fn connect_tcp(&mut self, address: &str) -> Result<(), NeovimError> {
+        if self.connection.is_some() {
+            return Err(NeovimError::Connection(format!(
+                "Already connected to {}. Disconnect first.",
+                self.connection.as_ref().unwrap().target()
             )));
         }
 
         debug!("Attempting to connect to Neovim at {}", address);
-        let handler = NeovimHandler;
+        let handler = NeovimHandler::new();
         match create::new_tcp(address, handler).await {
             Ok((nvim, io_handler)) => {
                 let connection = NeovimConnection::new(
@@ -503,111 +593,14 @@ impl NeovimClient {
             }
         }
     }
+}
 
-    #[instrument(skip(self))]
-    pub async fn disconnect(&mut self) -> Result<String, NeovimError> {
-        debug!("Attempting to disconnect from Neovim");
-
-        if let Some(connection) = self.connection.take() {
-            let address = connection.address().to_string();
-            connection.io_handler.abort();
-            debug!("Successfully disconnected from Neovim at {}", address);
-            Ok(address)
-        } else {
-            Err(NeovimError::Connection(
-                "Not connected to any Neovim instance".to_string(),
-            ))
-        }
-    }
-
-    #[instrument(skip(self))]
-    pub async fn list_buffers_info(&self) -> Result<Vec<String>, NeovimError> {
-        debug!("Listing buffers");
-
-        let conn = self.connection.as_ref().ok_or_else(|| {
-            NeovimError::Connection("Not connected to any Neovim instance".to_string())
-        })?;
-
-        match conn.nvim.list_bufs().await {
-            Ok(buffers) => {
-                let buffer_info: Vec<String> =
-                    futures::future::try_join_all(buffers.iter().map(|buf| async {
-                        let number = buf
-                            .get_number()
-                            .await
-                            .map_err(|e| format!("Number error: {e}"))?;
-                        let name = buf
-                            .get_name()
-                            .await
-                            .unwrap_or_else(|_| "[No Name]".to_string());
-                        let lines = buf
-                            .line_count()
-                            .await
-                            .map_err(|e| format!("Lines error: {e}"))?;
-                        Ok::<String, String>(format!("Buffer {number}: {name} ({lines} lines)"))
-                    }))
-                    .await
-                    .map_err(|e| NeovimError::Api(format!("Failed to get buffer info: {e}")))?;
-
-                debug!("Found {} buffers", buffer_info.len());
-                Ok(buffer_info)
-            }
-            Err(e) => {
-                debug!("Failed to list buffers: {}", e);
-                Err(NeovimError::Api(format!("Failed to list buffers: {e}")))
-            }
-        }
-    }
-
-    #[instrument(skip(self))]
-    pub async fn execute_lua(&self, code: &str) -> Result<Value, NeovimError> {
-        debug!("Executing Lua code: {}", code);
-
-        if code.trim().is_empty() {
-            return Err(NeovimError::Api("Lua code cannot be empty".to_string()));
-        }
-
-        let conn = self.connection.as_ref().ok_or_else(|| {
-            NeovimError::Connection("Not connected to any Neovim instance".to_string())
-        })?;
-
-        let lua_args = Vec::<Value>::new();
-        match conn.nvim.exec_lua(code, lua_args).await {
-            Ok(result) => {
-                debug!("Lua execution successful, result: {:?}", result);
-                Ok(result)
-            }
-            Err(e) => {
-                debug!("Lua execution failed: {e}");
-                Err(NeovimError::Api(format!("Lua execution failed: {e}")))
-            }
-        }
-    }
-
-    #[instrument(skip(self))]
-    pub async fn setup_diagnostics_changed_autocmd(&self) -> Result<(), NeovimError> {
-        debug!("Setting up diagnostics changed autocmd");
-
-        let conn = self.connection.as_ref().ok_or_else(|| {
-            NeovimError::Connection("Not connected to any Neovim instance".to_string())
-        })?;
-
-        match conn
-            .nvim
-            .exec_lua(include_str!("lua/diagnostics_autocmd.lua"), vec![])
-            .await
-        {
-            Ok(_) => {
-                debug!("Autocmd for diagnostics changed set up successfully");
-                Ok(())
-            }
-            Err(e) => {
-                debug!("Failed to set up diagnostics changed autocmd: {}", e);
-                Err(NeovimError::Api(format!(
-                    "Failed to set up diagnostics changed autocmd: {e}"
-                )))
-            }
-        }
+impl<T> NeovimClient<T>
+where
+    T: AsyncWrite + Send + 'static,
+{
+    pub fn new() -> Self {
+        Self { connection: None }
     }
 
     #[instrument(skip(self))]
@@ -649,19 +642,6 @@ impl NeovimClient {
                 Err(NeovimError::Api(format!("Failed to get diagnostics: {e}")))
             }
         }
-    }
-
-    #[instrument(skip(self))]
-    pub async fn get_buffer_diagnostics(
-        &self,
-        buffer_id: u64,
-    ) -> Result<Vec<Diagnostic>, NeovimError> {
-        self.get_diagnostics(Some(buffer_id)).await
-    }
-
-    #[instrument(skip(self))]
-    pub async fn get_workspace_diagnostics(&self) -> Result<Vec<Diagnostic>, NeovimError> {
-        self.get_diagnostics(None).await
     }
 
     #[allow(dead_code)]
@@ -765,9 +745,135 @@ impl NeovimClient {
             }
         }
     }
+}
+
+#[async_trait]
+impl<T> NeovimClientTrait for NeovimClient<T>
+where
+    T: AsyncWrite + Send + 'static,
+{
+    fn target(&self) -> Option<String> {
+        self.connection.as_ref().map(|c| c.target().to_string())
+    }
 
     #[instrument(skip(self))]
-    pub async fn lsp_get_clients(&self) -> Result<Vec<LspClient>, NeovimError> {
+    async fn disconnect(&mut self) -> Result<String, NeovimError> {
+        debug!("Attempting to disconnect from Neovim");
+
+        if let Some(connection) = self.connection.take() {
+            let target = connection.target().to_string();
+            connection.io_handler.abort();
+            debug!("Successfully disconnected from Neovim at {}", target);
+            Ok(target)
+        } else {
+            Err(NeovimError::Connection(
+                "Not connected to any Neovim instance".to_string(),
+            ))
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn list_buffers_info(&self) -> Result<Vec<String>, NeovimError> {
+        debug!("Listing buffers");
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        match conn.nvim.list_bufs().await {
+            Ok(buffers) => {
+                let buffer_info: Vec<String> =
+                    futures::future::try_join_all(buffers.iter().map(|buf| async {
+                        let number = buf
+                            .get_number()
+                            .await
+                            .map_err(|e| format!("Number error: {e}"))?;
+                        let name = buf
+                            .get_name()
+                            .await
+                            .unwrap_or_else(|_| "[No Name]".to_string());
+                        let lines = buf
+                            .line_count()
+                            .await
+                            .map_err(|e| format!("Lines error: {e}"))?;
+                        Ok::<String, String>(format!("Buffer {number}: {name} ({lines} lines)"))
+                    }))
+                    .await
+                    .map_err(|e| NeovimError::Api(format!("Failed to get buffer info: {e}")))?;
+
+                debug!("Found {} buffers", buffer_info.len());
+                Ok(buffer_info)
+            }
+            Err(e) => {
+                debug!("Failed to list buffers: {}", e);
+                Err(NeovimError::Api(format!("Failed to list buffers: {e}")))
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn execute_lua(&self, code: &str) -> Result<Value, NeovimError> {
+        debug!("Executing Lua code: {}", code);
+
+        if code.trim().is_empty() {
+            return Err(NeovimError::Api("Lua code cannot be empty".to_string()));
+        }
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        let lua_args = Vec::<Value>::new();
+        match conn.nvim.exec_lua(code, lua_args).await {
+            Ok(result) => {
+                debug!("Lua execution successful, result: {:?}", result);
+                Ok(result)
+            }
+            Err(e) => {
+                debug!("Lua execution failed: {e}");
+                Err(NeovimError::Api(format!("Lua execution failed: {e}")))
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn setup_diagnostics_changed_autocmd(&self) -> Result<(), NeovimError> {
+        debug!("Setting up diagnostics changed autocmd");
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        match conn
+            .nvim
+            .exec_lua(include_str!("lua/diagnostics_autocmd.lua"), vec![])
+            .await
+        {
+            Ok(_) => {
+                debug!("Autocmd for diagnostics changed set up successfully");
+                Ok(())
+            }
+            Err(e) => {
+                debug!("Failed to set up diagnostics changed autocmd: {}", e);
+                Err(NeovimError::Api(format!(
+                    "Failed to set up diagnostics changed autocmd: {e}"
+                )))
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn get_buffer_diagnostics(&self, buffer_id: u64) -> Result<Vec<Diagnostic>, NeovimError> {
+        self.get_diagnostics(Some(buffer_id)).await
+    }
+
+    #[instrument(skip(self))]
+    async fn get_workspace_diagnostics(&self) -> Result<Vec<Diagnostic>, NeovimError> {
+        self.get_diagnostics(None).await
+    }
+
+    #[instrument(skip(self))]
+    async fn lsp_get_clients(&self) -> Result<Vec<LspClient>, NeovimError> {
         debug!("Getting LSP clients");
 
         let conn = self.connection.as_ref().ok_or_else(|| {
@@ -797,5 +903,14 @@ impl NeovimClient {
                 Err(NeovimError::Api(format!("Failed to get LSP clients: {e}")))
             }
         }
+    }
+
+    async fn lsp_get_code_actions(
+        &self,
+        client_name: &str,
+        buffer_id: u64,
+        range: Range,
+    ) -> Result<Vec<CodeAction>, NeovimError> {
+        <NeovimClient<T>>::lsp_get_code_actions(self, client_name, buffer_id, range).await
     }
 }

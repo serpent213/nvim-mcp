@@ -162,7 +162,7 @@ async fn test_connect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error>> 
 
     // Create arguments as Map (based on rmcp expectations)
     let mut arguments = Map::new();
-    arguments.insert("address".to_string(), Value::String(address.clone()));
+    arguments.insert("target".to_string(), Value::String(address.clone()));
 
     // Test successful connection
     let result = service
@@ -189,7 +189,7 @@ async fn test_connect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error>> 
 
     // Test that connecting again fails (already connected)
     let mut arguments2 = Map::new();
-    arguments2.insert("address".to_string(), Value::String(address));
+    arguments2.insert("target".to_string(), Value::String(address));
 
     let result = service
         .call_tool(CallToolRequestParam {
@@ -243,7 +243,7 @@ async fn test_disconnect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error
 
     // Connect first
     let mut connect_args = Map::new();
-    connect_args.insert("address".to_string(), Value::String(address.clone()));
+    connect_args.insert("target".to_string(), Value::String(address.clone()));
 
     let _connect_result = service
         .call_tool(CallToolRequestParam {
@@ -334,7 +334,7 @@ async fn test_list_buffers_tool() -> Result<(), Box<dyn std::error::Error>> {
 
     // Connect first
     let mut connect_args = Map::new();
-    connect_args.insert("address".to_string(), Value::String(address));
+    connect_args.insert("target".to_string(), Value::String(address));
 
     let _connect_result = service
         .call_tool(CallToolRequestParam {
@@ -401,7 +401,7 @@ async fn test_complete_workflow() -> Result<(), Box<dyn std::error::Error>> {
     // Step 1: Connect to Neovim
     info!("Step 1: Connecting to Neovim");
     let mut connect_args = Map::new();
-    connect_args.insert("address".to_string(), Value::String(address.clone()));
+    connect_args.insert("target".to_string(), Value::String(address.clone()));
 
     let result = service
         .call_tool(CallToolRequestParam {
@@ -492,7 +492,7 @@ async fn test_error_handling() -> Result<(), Box<dyn std::error::Error>> {
     // Test connecting to invalid address
     let mut invalid_args = Map::new();
     invalid_args.insert(
-        "address".to_string(),
+        "target".to_string(),
         Value::String("invalid:99999".to_string()),
     );
 
@@ -572,7 +572,7 @@ async fn test_exec_lua_tool() -> Result<(), Box<dyn std::error::Error>> {
 
     // Connect first
     let mut connect_args = Map::new();
-    connect_args.insert("address".to_string(), Value::String(address));
+    connect_args.insert("target".to_string(), Value::String(address));
 
     let _connect_result = service
         .call_tool(CallToolRequestParam {
@@ -707,7 +707,7 @@ async fn test_lsp_clients_tool() -> Result<(), Box<dyn std::error::Error>> {
 
     // Connect first
     let mut connect_args = Map::new();
-    connect_args.insert("address".to_string(), Value::String(address));
+    connect_args.insert("target".to_string(), Value::String(address));
 
     let _connect_result = service
         .call_tool(CallToolRequestParam {
@@ -813,7 +813,7 @@ async fn test_read_workspace_diagnostics() -> Result<(), Box<dyn std::error::Err
 
     // Connect to Neovim first
     let mut connect_args = Map::new();
-    connect_args.insert("address".to_string(), Value::String(address));
+    connect_args.insert("target".to_string(), Value::String(address));
 
     let _connect_result = service
         .call_tool(CallToolRequestParam {

@@ -1,27 +1,33 @@
 use nvim_rs::{Neovim, compat::tokio::Compat, error::LoopError};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncWrite, WriteHalf};
 use tokio::task::JoinHandle;
 
-pub struct NeovimConnection {
-    pub nvim: Neovim<Compat<tokio::io::WriteHalf<TcpStream>>>,
+pub struct NeovimConnection<T>
+where
+    T: AsyncWrite + Send + 'static,
+{
+    pub nvim: Neovim<Compat<WriteHalf<T>>>,
     pub io_handler: JoinHandle<Result<Result<(), Box<LoopError>>, tokio::task::JoinError>>,
-    pub address: String,
+    pub target: String,
 }
 
-impl NeovimConnection {
+impl<T> NeovimConnection<T>
+where
+    T: AsyncWrite + Send + 'static,
+{
     pub fn new(
-        nvim: Neovim<Compat<tokio::io::WriteHalf<TcpStream>>>,
+        nvim: Neovim<Compat<WriteHalf<T>>>,
         io_handler: JoinHandle<Result<Result<(), Box<LoopError>>, tokio::task::JoinError>>,
-        address: String,
+        target: String,
     ) -> Self {
         Self {
             nvim,
             io_handler,
-            address,
+            target,
         }
     }
 
-    pub fn address(&self) -> &str {
-        &self.address
+    pub fn target(&self) -> &str {
+        &self.target
     }
 }

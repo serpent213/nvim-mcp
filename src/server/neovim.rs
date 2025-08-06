@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, instrument};
 
-use crate::neovim::{Diagnostic, NeovimClient, NeovimError, Position, Range};
+use crate::neovim::{Diagnostic, NeovimClient, NeovimClientTrait, NeovimError, Position, Range};
 
 impl From<NeovimError> for McpError {
     fn from(err: NeovimError) -> Self {
@@ -19,15 +19,16 @@ impl From<NeovimError> for McpError {
     }
 }
 
-#[derive(Clone)]
 pub struct NeovimMcpServer {
-    nvim_client: Arc<Mutex<NeovimClient>>,
+    nvim_client: Arc<Mutex<Option<Box<dyn NeovimClientTrait + Send>>>>,
     pub tool_router: ToolRouter<Self>,
 }
 
+/// Connect to Neovim instance via unix socket or TCP
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ConnectNvimTCPRequest {
-    pub address: String,
+pub struct ConnectNvimRequest {
+    /// target can be a unix socket path or a TCP address
+    pub target: String,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -55,22 +56,43 @@ impl NeovimMcpServer {
     pub fn new() -> Self {
         debug!("Creating new NeovimMcpServer instance");
         Self {
-            nvim_client: Arc::new(Mutex::new(NeovimClient::new())),
+            nvim_client: Arc::new(Mutex::new(None)),
             tool_router: Self::tool_router(),
         }
+    }
+
+    #[tool(description = "Connect to Neovim instance via unix socket(pipe)")]
+    #[instrument(skip(self))]
+    pub async fn connect_nvim(
+        &self,
+        Parameters(ConnectNvimRequest { target: path }): Parameters<ConnectNvimRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut client_guard = self.nvim_client.lock().await;
+
+        let mut client = NeovimClient::new();
+        client.connect_path(&path).await?;
+        client.setup_diagnostics_changed_autocmd().await?;
+
+        *client_guard = Some(Box::new(client));
+
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Connected to Neovim at {path}"
+        ))]))
     }
 
     #[tool(description = "Connect to Neovim instance via TCP")]
     #[instrument(skip(self))]
     pub async fn connect_nvim_tcp(
         &self,
-        Parameters(ConnectNvimTCPRequest { address }): Parameters<ConnectNvimTCPRequest>,
+        Parameters(ConnectNvimRequest { target: address }): Parameters<ConnectNvimRequest>,
     ) -> Result<CallToolResult, McpError> {
         let mut client_guard = self.nvim_client.lock().await;
 
-        client_guard.connect(&address).await?;
+        let mut client = NeovimClient::new();
+        client.connect_tcp(&address).await?;
+        client.setup_diagnostics_changed_autocmd().await?;
 
-        client_guard.setup_diagnostics_changed_autocmd().await?;
+        *client_guard = Some(Box::new(client));
 
         Ok(CallToolResult::success(vec![Content::text(format!(
             "Connected to Neovim at {address}"
@@ -81,20 +103,29 @@ impl NeovimMcpServer {
     #[instrument(skip(self))]
     pub async fn disconnect_nvim_tcp(&self) -> Result<CallToolResult, McpError> {
         let mut client_guard = self.nvim_client.lock().await;
-
-        let address = client_guard.disconnect().await?;
-
-        Ok(CallToolResult::success(vec![Content::text(format!(
-            "Disconnected from Neovim at {address}"
-        ))]))
+        if let Some(client) = client_guard.as_mut() {
+            let address = client.target().unwrap_or_else(|| "Unknown".to_string());
+            if let Err(e) = client.disconnect().await {
+                return Err(McpError::internal_error(
+                    format!("Failed to disconnect: {e}"),
+                    None,
+                ));
+            }
+            *client_guard = None;
+            Ok(CallToolResult::success(vec![Content::text(format!(
+                "Disconnected from Neovim at {address}"
+            ))]))
+        } else {
+            Err(self.no_client_error())
+        }
     }
 
     #[tool(description = "List all open buffers in Neovim")]
     #[instrument(skip(self))]
     pub async fn list_buffers(&self) -> Result<CallToolResult, McpError> {
-        let client_guard = self.nvim_client.lock().await;
-
-        let buffer_info = client_guard.list_buffers_info().await?;
+        let client_guard = self.get_client_guard().await;
+        let client = self.with_client_ref(&client_guard)?;
+        let buffer_info = client.list_buffers_info().await?;
 
         Ok(CallToolResult::success(vec![Content::text(format!(
             "Buffers ({}): {}",
@@ -109,9 +140,9 @@ impl NeovimMcpServer {
         &self,
         Parameters(ExecuteLuaRequest { code }): Parameters<ExecuteLuaRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let client_guard = self.nvim_client.lock().await;
-
-        let result = client_guard.execute_lua(&code).await?;
+        let client_guard = self.get_client_guard().await;
+        let client = self.with_client_ref(&client_guard)?;
+        let result = client.execute_lua(&code).await?;
 
         Ok(CallToolResult::success(vec![Content::text(format!(
             "Lua result: {result:?}",
@@ -124,9 +155,9 @@ impl NeovimMcpServer {
         &self,
         Parameters(BufferId { id }): Parameters<BufferId>,
     ) -> Result<CallToolResult, McpError> {
-        let client_guard = self.nvim_client.lock().await;
-
-        let diagnostics = client_guard.get_buffer_diagnostics(id).await?;
+        let client_guard = self.get_client_guard().await;
+        let client = self.with_client_ref(&client_guard)?;
+        let diagnostics = client.get_buffer_diagnostics(id).await?;
 
         Ok(CallToolResult::success(vec![Content::text(format!(
             "Diagnostics for buffer ID {id}: {diagnostics:?}",
@@ -136,9 +167,9 @@ impl NeovimMcpServer {
     #[tool(description = "Get workspace's lsp clients")]
     #[instrument(skip(self))]
     pub async fn lsp_clients(&self) -> Result<CallToolResult, McpError> {
-        let client_guard = self.nvim_client.lock().await;
-
-        let clients = client_guard.lsp_get_clients().await?;
+        let client_guard = self.get_client_guard().await;
+        let client = self.with_client_ref(&client_guard)?;
+        let clients = client.lsp_get_clients().await?;
 
         Ok(CallToolResult::success(vec![Content::json(clients)?]))
     }
@@ -156,20 +187,18 @@ impl NeovimMcpServer {
             end_character,
         }): Parameters<BufferLSPParams>,
     ) -> Result<CallToolResult, McpError> {
-        let client_guard = self.nvim_client.lock().await;
+        let range = Range {
+            start: Position { line, character },
+            end: Position {
+                line: end_line,
+                character: end_character,
+            },
+        };
 
-        let actions = client_guard
-            .lsp_get_code_actions(
-                &lsp_client_name,
-                id,
-                Range {
-                    start: Position { line, character },
-                    end: Position {
-                        line: end_line,
-                        character: end_character,
-                    },
-                },
-            )
+        let client_guard = self.get_client_guard().await;
+        let client = self.with_client_ref(&client_guard)?;
+        let actions = client
+            .lsp_get_code_actions(&lsp_client_name, id, range)
             .await?;
 
         Ok(CallToolResult::success(vec![Content::json(actions)?]))
@@ -179,17 +208,43 @@ impl NeovimMcpServer {
         &self,
         buffer_id: u64,
     ) -> Result<Vec<Diagnostic>, McpError> {
-        let client_guard = self.nvim_client.lock().await;
-        Ok(client_guard.get_buffer_diagnostics(buffer_id).await?)
+        let client_guard = self.get_client_guard().await;
+        let client = self.with_client_ref(&client_guard)?;
+        Ok(client.get_buffer_diagnostics(buffer_id).await?)
     }
 
     pub async fn get_workspace_diagnostics(&self) -> Result<Vec<Diagnostic>, McpError> {
-        let client_guard = self.nvim_client.lock().await;
-        Ok(client_guard.get_workspace_diagnostics().await?)
+        let client_guard = self.get_client_guard().await;
+        let client = self.with_client_ref(&client_guard)?;
+        Ok(client.get_workspace_diagnostics().await?)
     }
 
     pub fn router(&self) -> &ToolRouter<Self> {
         &self.tool_router
+    }
+
+    /// Helper method to get a locked reference to the client
+    async fn get_client_guard(
+        &self,
+    ) -> tokio::sync::MutexGuard<'_, Option<Box<dyn NeovimClientTrait + Send>>> {
+        self.nvim_client.lock().await
+    }
+
+    /// Helper method to safely access the client or return an error
+    fn with_client_ref<'a>(
+        &'a self,
+        client_guard: &'a tokio::sync::MutexGuard<'_, Option<Box<dyn NeovimClientTrait + Send>>>,
+    ) -> Result<&'a dyn NeovimClientTrait, McpError> {
+        if let Some(client) = client_guard.as_ref() {
+            Ok(client.as_ref())
+        } else {
+            Err(self.no_client_error())
+        }
+    }
+
+    /// Helper method to create consistent "no client connected" error
+    fn no_client_error(&self) -> McpError {
+        McpError::invalid_request("No Neovim client connected".to_string(), None)
     }
 }
 
