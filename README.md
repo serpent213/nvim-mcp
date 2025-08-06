@@ -86,11 +86,11 @@ The server provides these MCP tools for interacting with Neovim:
 
 ### Connection Management
 
-- **`connect_nvim`**: Connect via Unix socket/named pipe
+- **`connect`**: Connect via Unix socket/named pipe
   - Parameters: `target` (string) - Socket path
-- **`connect_nvim_tcp`**: Connect via TCP
-  - Parameters: `address` (string) - TCP address (e.g., "127.0.0.1:6666")
-- **`disconnect_nvim_tcp`**: Disconnect from current Neovim instance
+- **`connect_tcp`**: Connect via TCP
+  - Parameters: `target` (string) - TCP address (e.g., "127.0.0.1:6666")
+- **`disconnect`**: Disconnect from current Neovim instance
 
 ### Buffer Operations
 

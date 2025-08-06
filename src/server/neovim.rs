@@ -63,7 +63,7 @@ impl NeovimMcpServer {
 
     #[tool(description = "Connect to Neovim instance via unix socket(pipe)")]
     #[instrument(skip(self))]
-    pub async fn connect_nvim(
+    pub async fn connect(
         &self,
         Parameters(ConnectNvimRequest { target: path }): Parameters<ConnectNvimRequest>,
     ) -> Result<CallToolResult, McpError> {
@@ -82,7 +82,7 @@ impl NeovimMcpServer {
 
     #[tool(description = "Connect to Neovim instance via TCP")]
     #[instrument(skip(self))]
-    pub async fn connect_nvim_tcp(
+    pub async fn connect_tcp(
         &self,
         Parameters(ConnectNvimRequest { target: address }): Parameters<ConnectNvimRequest>,
     ) -> Result<CallToolResult, McpError> {
@@ -101,10 +101,10 @@ impl NeovimMcpServer {
 
     #[tool(description = "Disconnect from Neovim instance")]
     #[instrument(skip(self))]
-    pub async fn disconnect_nvim_tcp(&self) -> Result<CallToolResult, McpError> {
+    pub async fn disconnect(&self) -> Result<CallToolResult, McpError> {
         let mut client_guard = self.nvim_client.lock().await;
         if let Some(client) = client_guard.as_mut() {
-            let address = client.target().unwrap_or_else(|| "Unknown".to_string());
+            let target = client.target().unwrap_or_else(|| "Unknown".to_string());
             if let Err(e) = client.disconnect().await {
                 return Err(McpError::internal_error(
                     format!("Failed to disconnect: {e}"),
@@ -113,7 +113,7 @@ impl NeovimMcpServer {
             }
             *client_guard = None;
             Ok(CallToolResult::success(vec![Content::text(format!(
-                "Disconnected from Neovim at {address}"
+                "Disconnected from Neovim at {target}"
             ))]))
         } else {
             Err(self.no_client_error())
