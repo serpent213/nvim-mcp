@@ -1,6 +1,3 @@
-use std::process::Command as StdCommand;
-use std::time::{Duration, Instant};
-
 use rmcp::{
     model::{CallToolRequestParam, ReadResourceRequestParam},
     serde_json::{Map, Value},
@@ -8,52 +5,10 @@ use rmcp::{
     transport::{ConfigureCommandExt, TokioChildProcess},
 };
 use tokio::process::Command;
-use tokio::time::sleep;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 use tracing_test::traced_test;
 
-/// Helper function to setup a Neovim instance for testing
-async fn setup_test_neovim_instance(
-    port: u16,
-) -> Result<std::process::Child, Box<dyn std::error::Error>> {
-    let listen = format!("127.0.0.1:{port}");
-
-    let mut child = StdCommand::new("nvim")
-        .args(["-u", "NONE", "--headless", "--listen", &listen])
-        .spawn()
-        .map_err(|e| {
-            format!("Failed to start Neovim - ensure nvim is installed and in PATH: {e}")
-        })?;
-
-    // Wait for Neovim to start and create the TCP socket
-    let start = Instant::now();
-    loop {
-        sleep(Duration::from_millis(100)).await;
-
-        // Try to connect to see if Neovim is ready
-        if tokio::net::TcpStream::connect(&listen).await.is_ok() {
-            break;
-        }
-
-        if start.elapsed() >= Duration::from_secs(10) {
-            let _ = child.kill();
-            return Err(format!("Neovim failed to start within 10 seconds at {listen}").into());
-        }
-    }
-
-    debug!("Neovim instance started at {}", listen);
-    Ok(child)
-}
-
-/// Helper to cleanup Neovim process safely
-fn cleanup_nvim_process(mut child: std::process::Child) {
-    if let Err(e) = child.kill() {
-        tracing::warn!("Failed to kill Neovim process: {}", e);
-    }
-    if let Err(e) = child.wait() {
-        tracing::warn!("Failed to wait for Neovim process: {}", e);
-    }
-}
+use crate::test_utils::*;
 
 #[tokio::test]
 #[traced_test]
@@ -120,8 +75,9 @@ async fn test_list_tools() -> Result<(), Box<dyn std::error::Error>> {
 
     // Verify we have the expected tools
     let tool_names: Vec<&str> = tools.tools.iter().map(|t| t.name.as_ref()).collect();
-    assert!(tool_names.contains(&"connect_nvim_tcp"));
-    assert!(tool_names.contains(&"disconnect_nvim_tcp"));
+    assert!(tool_names.contains(&"connect"));
+    assert!(tool_names.contains(&"connect_tcp"));
+    assert!(tool_names.contains(&"disconnect"));
     assert!(tool_names.contains(&"list_buffers"));
     assert!(tool_names.contains(&"lsp_clients"));
 
@@ -155,19 +111,17 @@ async fn test_connect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error>> 
         })?;
 
     // Start a test Neovim instance
-    let port = 6667; // Use different port to avoid conflicts
-    let nvim_child = setup_test_neovim_instance(port).await?;
-
-    let address = format!("127.0.0.1:{port}");
+    let ipc_path = generate_random_ipc_path();
+    let _guard = setup_test_neovim_instance(&ipc_path).await?;
 
     // Create arguments as Map (based on rmcp expectations)
     let mut arguments = Map::new();
-    arguments.insert("target".to_string(), Value::String(address.clone()));
+    arguments.insert("target".to_string(), Value::String(ipc_path.clone()));
 
     // Test successful connection
     let result = service
         .call_tool(CallToolRequestParam {
-            name: "connect_nvim_tcp".into(),
+            name: "connect".into(),
             arguments: Some(arguments),
         })
         .await?;
@@ -179,7 +133,7 @@ async fn test_connect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error>> 
     if let Some(content) = result.content.first() {
         if let Some(text) = content.as_text() {
             assert!(text.text.contains("Connected to Neovim"));
-            assert!(text.text.contains(&address));
+            assert!(text.text.contains(&ipc_path));
         } else {
             panic!("Expected text content in connect result");
         }
@@ -187,23 +141,26 @@ async fn test_connect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error>> 
         panic!("No content in connect result");
     }
 
-    // Test that connecting again fails (already connected)
+    // Test that connecting again succeeds (IPC connections allow reconnection)
     let mut arguments2 = Map::new();
-    arguments2.insert("target".to_string(), Value::String(address));
+    arguments2.insert("target".to_string(), Value::String(ipc_path.clone()));
 
     let result = service
         .call_tool(CallToolRequestParam {
-            name: "connect_nvim_tcp".into(),
+            name: "connect".into(),
             arguments: Some(arguments2),
         })
         .await;
 
-    assert!(result.is_err(), "Should not be able to connect twice");
+    // For IPC connections, we allow reconnection to the same path
+    assert!(
+        result.is_ok(),
+        "Should be able to reconnect to the same IPC path"
+    );
 
-    // Cleanup
-    cleanup_nvim_process(nvim_child);
+    // Cleanup happens automatically via guard
     service.cancel().await?;
-    info!("Connect nvim TCP tool test completed successfully");
+    info!("Connect nvim tool test completed successfully");
 
     Ok(())
 }
@@ -228,7 +185,7 @@ async fn test_disconnect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error
     // Test disconnect without connection (should fail)
     let result = service
         .call_tool(CallToolRequestParam {
-            name: "disconnect_nvim_tcp".into(),
+            name: "disconnect".into(),
             arguments: None,
         })
         .await;
@@ -236,18 +193,16 @@ async fn test_disconnect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error
     assert!(result.is_err(), "Disconnect should fail when not connected");
 
     // Now connect first, then test disconnect
-    let port = 6668;
-    let nvim_child = setup_test_neovim_instance(port).await?;
-
-    let address = format!("127.0.0.1:{port}");
+    let ipc_path = generate_random_ipc_path();
+    let _guard = setup_test_neovim_instance(&ipc_path).await?;
 
     // Connect first
     let mut connect_args = Map::new();
-    connect_args.insert("target".to_string(), Value::String(address.clone()));
+    connect_args.insert("target".to_string(), Value::String(ipc_path.clone()));
 
     let _connect_result = service
         .call_tool(CallToolRequestParam {
-            name: "connect_nvim_tcp".into(),
+            name: "connect".into(),
             arguments: Some(connect_args),
         })
         .await?;
@@ -255,7 +210,7 @@ async fn test_disconnect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error
     // Now test successful disconnect
     let result = service
         .call_tool(CallToolRequestParam {
-            name: "disconnect_nvim_tcp".into(),
+            name: "disconnect".into(),
             arguments: None,
         })
         .await?;
@@ -267,7 +222,7 @@ async fn test_disconnect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error
     if let Some(content) = result.content.first() {
         if let Some(text) = content.as_text() {
             assert!(text.text.contains("Disconnected from Neovim"));
-            assert!(text.text.contains(&address));
+            assert!(text.text.contains(&ipc_path));
         } else {
             panic!("Expected text content in disconnect result");
         }
@@ -278,7 +233,7 @@ async fn test_disconnect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error
     // Test that disconnecting again fails (not connected)
     let result = service
         .call_tool(CallToolRequestParam {
-            name: "disconnect_nvim_tcp".into(),
+            name: "disconnect".into(),
             arguments: None,
         })
         .await;
@@ -288,10 +243,9 @@ async fn test_disconnect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error
         "Should not be able to disconnect when not connected"
     );
 
-    // Cleanup
-    cleanup_nvim_process(nvim_child);
+    // Cleanup happens automatically via guard
     service.cancel().await?;
-    info!("Disconnect nvim TCP tool test completed successfully");
+    info!("Disconnect nvim tool test completed successfully");
 
     Ok(())
 }
@@ -327,18 +281,16 @@ async fn test_list_buffers_tool() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Now connect first, then test list buffers
-    let port = 6669;
-    let nvim_child = setup_test_neovim_instance(port).await?;
-
-    let address = format!("127.0.0.1:{port}");
+    let ipc_path = generate_random_ipc_path();
+    let _guard = setup_test_neovim_instance(&ipc_path).await?;
 
     // Connect first
     let mut connect_args = Map::new();
-    connect_args.insert("target".to_string(), Value::String(address));
+    connect_args.insert("target".to_string(), Value::String(ipc_path.clone()));
 
     let _connect_result = service
         .call_tool(CallToolRequestParam {
-            name: "connect_nvim_tcp".into(),
+            name: "connect".into(),
             arguments: Some(connect_args),
         })
         .await?;
@@ -367,8 +319,7 @@ async fn test_list_buffers_tool() -> Result<(), Box<dyn std::error::Error>> {
         panic!("No content in list buffers result");
     }
 
-    // Cleanup
-    cleanup_nvim_process(nvim_child);
+    // Cleanup happens automatically via guard
     service.cancel().await?;
     info!("List buffers tool test completed successfully");
 
@@ -393,19 +344,17 @@ async fn test_complete_workflow() -> Result<(), Box<dyn std::error::Error>> {
         })?;
 
     // Start Neovim instance
-    let port = 6670;
-    let nvim_child = setup_test_neovim_instance(port).await?;
-
-    let address = format!("127.0.0.1:{port}");
+    let ipc_path = generate_random_ipc_path();
+    let _guard = setup_test_neovim_instance(&ipc_path).await?;
 
     // Step 1: Connect to Neovim
     info!("Step 1: Connecting to Neovim");
     let mut connect_args = Map::new();
-    connect_args.insert("target".to_string(), Value::String(address.clone()));
+    connect_args.insert("target".to_string(), Value::String(ipc_path.clone()));
 
     let result = service
         .call_tool(CallToolRequestParam {
-            name: "connect_nvim_tcp".into(),
+            name: "connect".into(),
             arguments: Some(connect_args),
         })
         .await?;
@@ -441,7 +390,7 @@ async fn test_complete_workflow() -> Result<(), Box<dyn std::error::Error>> {
     info!("Step 4: Disconnecting from Neovim");
     let result = service
         .call_tool(CallToolRequestParam {
-            name: "disconnect_nvim_tcp".into(),
+            name: "disconnect".into(),
             arguments: None,
         })
         .await?;
@@ -464,8 +413,7 @@ async fn test_complete_workflow() -> Result<(), Box<dyn std::error::Error>> {
     );
     info!("✓ Verified disconnect state");
 
-    // Cleanup
-    cleanup_nvim_process(nvim_child);
+    // Cleanup happens automatically via guard
     service.cancel().await?;
     info!("Complete workflow test completed successfully");
 
@@ -565,18 +513,16 @@ async fn test_exec_lua_tool() -> Result<(), Box<dyn std::error::Error>> {
     assert!(result.is_err(), "exec_lua should fail when not connected");
 
     // Now connect first, then test exec_lua
-    let port = 6671;
-    let nvim_child = setup_test_neovim_instance(port).await?;
-
-    let address = format!("127.0.0.1:{port}");
+    let ipc_path = generate_random_ipc_path();
+    let _guard = setup_test_neovim_instance(&ipc_path).await?;
 
     // Connect first
     let mut connect_args = Map::new();
-    connect_args.insert("target".to_string(), Value::String(address));
+    connect_args.insert("target".to_string(), Value::String(ipc_path.clone()));
 
     let _connect_result = service
         .call_tool(CallToolRequestParam {
-            name: "connect_nvim_tcp".into(),
+            name: "connect".into(),
             arguments: Some(connect_args),
         })
         .await?;
@@ -661,8 +607,7 @@ async fn test_exec_lua_tool() -> Result<(), Box<dyn std::error::Error>> {
 
     assert!(result.is_err(), "Should fail when code argument is missing");
 
-    // Cleanup
-    cleanup_nvim_process(nvim_child);
+    // Cleanup happens automatically via guard
     service.cancel().await?;
     info!("Exec Lua tool test completed successfully");
 
@@ -700,18 +645,16 @@ async fn test_lsp_clients_tool() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Now connect first, then test lsp_clients
-    let port = 6673;
-    let nvim_child = setup_test_neovim_instance(port).await?;
-
-    let address = format!("127.0.0.1:{port}");
+    let ipc_path = generate_random_ipc_path();
+    let _guard = setup_test_neovim_instance(&ipc_path).await?;
 
     // Connect first
     let mut connect_args = Map::new();
-    connect_args.insert("target".to_string(), Value::String(address));
+    connect_args.insert("target".to_string(), Value::String(ipc_path.clone()));
 
     let _connect_result = service
         .call_tool(CallToolRequestParam {
-            name: "connect_nvim_tcp".into(),
+            name: "connect".into(),
             arguments: Some(connect_args),
         })
         .await?;
@@ -735,8 +678,7 @@ async fn test_lsp_clients_tool() -> Result<(), Box<dyn std::error::Error>> {
         panic!("No content in lsp_clients result");
     }
 
-    // Cleanup
-    cleanup_nvim_process(nvim_child);
+    // Cleanup happens automatically via guard
     service.cancel().await?;
     info!("LSP clients tool test completed successfully");
 
@@ -807,17 +749,16 @@ async fn test_read_workspace_diagnostics() -> Result<(), Box<dyn std::error::Err
         })?;
 
     // Start Neovim instance
-    let port = 6672;
-    let nvim_child = setup_test_neovim_instance(port).await?;
-    let address = format!("127.0.0.1:{port}");
+    let ipc_path = generate_random_ipc_path();
+    let _guard = setup_test_neovim_instance(&ipc_path).await?;
 
     // Connect to Neovim first
     let mut connect_args = Map::new();
-    connect_args.insert("target".to_string(), Value::String(address));
+    connect_args.insert("target".to_string(), Value::String(ipc_path.clone()));
 
     let _connect_result = service
         .call_tool(CallToolRequestParam {
-            name: "connect_nvim_tcp".into(),
+            name: "connect".into(),
             arguments: Some(connect_args),
         })
         .await?;
@@ -869,8 +810,7 @@ async fn test_read_workspace_diagnostics() -> Result<(), Box<dyn std::error::Err
 
     assert!(result.is_err(), "Should fail for invalid buffer ID");
 
-    // Cleanup
-    cleanup_nvim_process(nvim_child);
+    // Cleanup happens automatically via guard
     service.cancel().await?;
     info!("Read workspace diagnostics test completed successfully");
 

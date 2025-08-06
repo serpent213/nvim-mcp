@@ -510,6 +510,7 @@ pub struct CodeAction {
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct CodeActionResult {
+    #[serde(default)]
     pub result: Vec<CodeAction>,
 }
 

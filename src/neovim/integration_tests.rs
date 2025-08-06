@@ -1,96 +1,12 @@
-use std::path::PathBuf;
-use std::process::Command;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use tokio::net::TcpStream;
 use tokio::time::sleep;
 use tracing::info;
 use tracing_test::traced_test;
 
 use crate::neovim::client::{Position, Range};
 use crate::neovim::{NeovimClient, NeovimClientTrait};
-
-const HOST: &str = "127.0.0.1";
-const PORT_BASE: u16 = 7777;
-
-// Global mutex to prevent concurrent Neovim instances from using the same port
-static NEOVIM_TEST_MUTEX: Mutex<()> = Mutex::new(());
-
-fn nvim_path() -> &'static str {
-    "nvim"
-}
-
-async fn setup_neovim_instance_advance(
-    port: u16,
-    cfg_path: &str,
-    open_file: &str,
-) -> std::process::Child {
-    let listen = format!("{HOST}:{port}");
-
-    let mut child = Command::new(nvim_path())
-        .args(["-u", cfg_path, "--headless", "--listen", &listen])
-        .args(
-            (!open_file.is_empty())
-                .then_some(vec![open_file])
-                .unwrap_or_default(),
-        )
-        .spawn()
-        .expect("Failed to start Neovim - ensure nvim is installed and in PATH");
-
-    // Wait for Neovim to start and create the TCP socket
-    let start = Instant::now();
-    loop {
-        sleep(Duration::from_millis(100)).await;
-
-        // Try to connect to see if Neovim is ready
-        if tokio::net::TcpStream::connect(&listen).await.is_ok() {
-            break;
-        }
-
-        if start.elapsed() >= Duration::from_secs(10) {
-            let _ = child.kill();
-            panic!("Neovim failed to start within 10 seconds at {listen}");
-        }
-    }
-
-    child
-}
-
-async fn setup_neovim_instance(port: u16) -> std::process::Child {
-    setup_neovim_instance_advance(port, "NONE", "").await
-}
-
-/// Helper to cleanup Neovim process safely
-fn cleanup_nvim_process(mut child: std::process::Child) {
-    if let Err(e) = child.kill() {
-        tracing::warn!("Failed to kill Neovim process: {}", e);
-    }
-    if let Err(e) = child.wait() {
-        tracing::warn!("Failed to wait for Neovim process: {}", e);
-    }
-}
-
-async fn setup_connected_client(port: u16) -> (impl NeovimClientTrait, std::process::Child) {
-    let child = setup_neovim_instance(port).await;
-    let mut client = NeovimClient::new();
-    let address = format!("{HOST}:{port}");
-
-    let result = client.connect_tcp(&address).await;
-    if result.is_err() {
-        cleanup_nvim_process(child);
-        panic!("Failed to connect to Neovim: {result:?}");
-    }
-
-    (client, child)
-}
-
-fn get_testdata_path(filename: &str) -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("src/neovim/testdata");
-    path.push(filename);
-    path
-}
+use crate::test_utils::*;
 
 #[tokio::test]
 #[traced_test]
@@ -103,6 +19,7 @@ async fn test_tcp_connection_lifecycle() {
         drop(_guard);
         setup_neovim_instance(port).await
     };
+    let _guard = NeovimProcessGuard::new(child, address.clone());
     let mut client = NeovimClient::new();
 
     // Test connection
@@ -124,19 +41,16 @@ async fn test_tcp_connection_lifecycle() {
         "Should not be able to disconnect when not connected"
     );
 
-    cleanup_nvim_process(child);
+    // Guard automatically cleans up when it goes out of scope
 }
 
 #[tokio::test]
 #[traced_test]
+#[cfg(any(unix, windows))]
 async fn test_buffer_operations() {
-    let port = PORT_BASE + 1;
+    let ipc_path = generate_random_ipc_path();
 
-    let (client, child) = {
-        let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
-        drop(_guard);
-        setup_connected_client(port).await
-    };
+    let (client, _guard) = setup_connected_client_ipc(&ipc_path).await;
 
     // Test buffer listing
     let result = client.list_buffers_info().await;
@@ -152,19 +66,16 @@ async fn test_buffer_operations() {
         "Buffer list should contain buffer info: {buffer_info_text:?}"
     );
 
-    cleanup_nvim_process(child);
+    // Guard automatically cleans up when it goes out of scope
 }
 
 #[tokio::test]
 #[traced_test]
+#[cfg(any(unix, windows))]
 async fn test_lua_execution() {
-    let port = PORT_BASE + 3;
+    let ipc_path = generate_random_ipc_path();
 
-    let (client, child) = {
-        let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
-        drop(_guard);
-        setup_connected_client(port).await
-    };
+    let (client, _guard) = setup_connected_client_ipc(&ipc_path).await;
 
     // Test successful Lua execution
     let result = client.execute_lua("return 42").await;
@@ -188,13 +99,21 @@ async fn test_lua_execution() {
     let result = client.execute_lua("").await;
     assert!(result.is_err(), "Should fail for empty Lua code");
 
-    cleanup_nvim_process(child);
+    // Guard automatically cleans up when it goes out of scope
 }
 
 #[tokio::test]
 #[traced_test]
+#[cfg(any(unix, windows))]
 async fn test_error_handling() {
-    let client = NeovimClient::<TcpStream>::new();
+    #[cfg(unix)]
+    use tokio::net::UnixStream;
+    #[cfg(windows)]
+    use tokio::net::windows::named_pipe::NamedPipeClient;
+    #[cfg(unix)]
+    let client = NeovimClient::<UnixStream>::new();
+    #[cfg(windows)]
+    let client = NeovimClient::<NamedPipeClient>::new();
 
     // Test operations without connection
     let result = client.list_buffers_info().await;
@@ -216,57 +135,51 @@ async fn test_error_handling() {
 
 #[tokio::test]
 #[traced_test]
+#[cfg(any(unix, windows))]
 async fn test_connection_constraint() {
-    let port = PORT_BASE + 2;
+    let ipc_path = generate_random_ipc_path();
 
-    let child = {
-        let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
-        drop(_guard);
-        setup_neovim_instance(port).await
-    };
+    let child = setup_neovim_instance_ipc(&ipc_path).await;
+    let _guard = NeovimIpcGuard::new(child, ipc_path.clone());
     let mut client = NeovimClient::new();
-    let address = format!("{HOST}:{port}");
 
     // Connect to instance
-    let result = client.connect_tcp(&address).await;
+    let result = client.connect_path(&ipc_path).await;
     assert!(result.is_ok(), "Failed to connect to instance");
 
     // Try to connect again (should fail)
-    let result = client.connect_tcp(&address).await;
+    let result = client.connect_path(&ipc_path).await;
     assert!(result.is_err(), "Should not be able to connect twice");
 
     // Disconnect and then connect again (should work)
     let result = client.disconnect().await;
     assert!(result.is_ok(), "Failed to disconnect from instance");
 
-    let result = client.connect_tcp(&address).await;
+    let result = client.connect_path(&ipc_path).await;
     assert!(result.is_ok(), "Failed to reconnect after disconnect");
 
-    cleanup_nvim_process(child);
+    // Guard automatically cleans up when it goes out of scope
 }
 
 #[tokio::test]
 #[traced_test]
+#[cfg(any(unix, windows))]
 async fn test_get_vim_diagnostics() {
-    let port = PORT_BASE;
+    let ipc_path = generate_random_ipc_path();
 
-    let child = {
-        let _guard = NEOVIM_TEST_MUTEX.lock().unwrap();
-        drop(_guard);
-        setup_neovim_instance_advance(
-            port,
-            get_testdata_path("cfg_lsp.lua").to_str().unwrap(),
-            get_testdata_path("diagnostic_problems.lua")
-                .to_str()
-                .unwrap(),
-        )
-        .await
-    };
+    let child = setup_neovim_instance_ipc_advance(
+        &ipc_path,
+        get_testdata_path("cfg_lsp.lua").to_str().unwrap(),
+        get_testdata_path("diagnostic_problems.lua")
+            .to_str()
+            .unwrap(),
+    )
+    .await;
+    let _guard = NeovimIpcGuard::new(child, ipc_path.clone());
     let mut client = NeovimClient::new();
-    let address = format!("{HOST}:{port}");
 
     // Connect to instance
-    let result = client.connect_tcp(&address).await;
+    let result = client.connect_path(&ipc_path).await;
     assert!(result.is_ok(), "Failed to connect to instance");
 
     // Set up diagnostics and get diagnostics for buffer 0
@@ -281,20 +194,38 @@ async fn test_get_vim_diagnostics() {
     let result = client.get_buffer_diagnostics(0).await;
     assert!(result.is_ok(), "Failed to get diagnostics: {result:?}");
 
-    cleanup_nvim_process(child);
+    // Guard automatically cleans up when it goes out of scope
 }
 
 #[tokio::test]
 #[traced_test]
+#[cfg(any(unix, windows))]
 async fn test_code_action() {
-    let port = 6666;
+    let ipc_path = generate_random_ipc_path();
 
+    let child = setup_neovim_instance_ipc_advance(
+        &ipc_path,
+        get_testdata_path("cfg_lsp.lua").to_str().unwrap(),
+        get_testdata_path("diagnostic_problems.lua")
+            .to_str()
+            .unwrap(),
+    )
+    .await;
+    let _guard = NeovimIpcGuard::new(child, ipc_path.clone());
     let mut client = NeovimClient::new();
-    let address = format!("{HOST}:{port}");
 
     // Connect to instance
-    let result = client.connect_tcp(&address).await;
+    let result = client.connect_path(&ipc_path).await;
     assert!(result.is_ok(), "Failed to connect to instance");
+
+    // Set up diagnostics and wait for LSP
+    let result = client.setup_diagnostics_changed_autocmd().await;
+    assert!(
+        result.is_ok(),
+        "Failed to setup diagnostics autocmd: {result:?}"
+    );
+
+    sleep(Duration::from_secs(20)).await; // Allow time for LSP to initialize
 
     let result = client.get_buffer_diagnostics(0).await;
     assert!(result.is_ok(), "Failed to get diagnostics: {result:?}");
@@ -320,4 +251,6 @@ async fn test_code_action() {
         .await;
     assert!(result.is_ok(), "Failed to get code actions: {result:?}");
     info!("Code actions: {:?}", result);
+
+    // Guard automatically cleans up when it goes out of scope
 }

@@ -1,6 +1,9 @@
 mod neovim;
 mod server;
 
+#[cfg(test)]
+pub mod test_utils;
+
 pub use server::NeovimMcpServer;
 
 pub type Result<T> = std::result::Result<T, ServerError>;
