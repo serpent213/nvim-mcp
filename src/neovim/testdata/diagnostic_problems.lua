@@ -1,6 +1,6 @@
 function hello()
-       vim.print("Hello, world!")
+    vim.print("Hello, world!")
 
-       local a = 1
-       a = "1"
+    local a = 1
+    a = "1"
 end
