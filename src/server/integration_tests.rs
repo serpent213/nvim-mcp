@@ -10,6 +10,26 @@ use tracing_test::traced_test;
 
 use crate::test_utils::*;
 
+// Helper function to extract connection_id from connect response
+fn extract_connection_id(
+    result: &rmcp::model::CallToolResult,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if let Some(content) = result.content.first() {
+        // The content should be JSON
+        let json_str = match &content.raw {
+            rmcp::model::RawContent::Text(text_content) => &text_content.text,
+            _ => return Err("Expected text content".into()),
+        };
+
+        // Parse JSON
+        let json_value: serde_json::Value = serde_json::from_str(json_str)?;
+        if let Some(connection_id) = json_value["connection_id"].as_str() {
+            return Ok(connection_id.to_string());
+        }
+    }
+    Err("Failed to extract connection_id from response".into())
+}
+
 #[tokio::test]
 #[traced_test]
 async fn test_mcp_server_connection() -> Result<(), Box<dyn std::error::Error>> {
@@ -182,15 +202,24 @@ async fn test_disconnect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error
             e
         })?;
 
-    // Test disconnect without connection (should fail)
+    // Test disconnect without valid connection (should fail)
+    let mut invalid_disconnect_args = Map::new();
+    invalid_disconnect_args.insert(
+        "connection_id".to_string(),
+        Value::String("invalid_connection_id".to_string()),
+    );
+
     let result = service
         .call_tool(CallToolRequestParam {
             name: "disconnect".into(),
-            arguments: None,
+            arguments: Some(invalid_disconnect_args),
         })
         .await;
 
-    assert!(result.is_err(), "Disconnect should fail when not connected");
+    assert!(
+        result.is_err(),
+        "Disconnect should fail with invalid connection ID"
+    );
 
     // Now connect first, then test disconnect
     let ipc_path = generate_random_ipc_path();
@@ -200,18 +229,26 @@ async fn test_disconnect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error
     let mut connect_args = Map::new();
     connect_args.insert("target".to_string(), Value::String(ipc_path.clone()));
 
-    let _connect_result = service
+    let connect_result = service
         .call_tool(CallToolRequestParam {
             name: "connect".into(),
             arguments: Some(connect_args),
         })
         .await?;
 
+    let connection_id = extract_connection_id(&connect_result)?;
+
     // Now test successful disconnect
+    let mut disconnect_args = Map::new();
+    disconnect_args.insert(
+        "connection_id".to_string(),
+        Value::String(connection_id.clone()),
+    );
+
     let result = service
         .call_tool(CallToolRequestParam {
             name: "disconnect".into(),
-            arguments: None,
+            arguments: Some(disconnect_args),
         })
         .await?;
 
@@ -231,10 +268,13 @@ async fn test_disconnect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error
     }
 
     // Test that disconnecting again fails (not connected)
+    let mut disconnect_args2 = Map::new();
+    disconnect_args2.insert("connection_id".to_string(), Value::String(connection_id));
+
     let result = service
         .call_tool(CallToolRequestParam {
             name: "disconnect".into(),
-            arguments: None,
+            arguments: Some(disconnect_args2),
         })
         .await;
 
@@ -268,16 +308,22 @@ async fn test_list_buffers_tool() -> Result<(), Box<dyn std::error::Error>> {
         })?;
 
     // Test list buffers without connection (should fail)
+    let mut invalid_args = Map::new();
+    invalid_args.insert(
+        "connection_id".to_string(),
+        Value::String("invalid_connection_id".to_string()),
+    );
+
     let result = service
         .call_tool(CallToolRequestParam {
             name: "list_buffers".into(),
-            arguments: None,
+            arguments: Some(invalid_args),
         })
         .await;
 
     assert!(
         result.is_err(),
-        "List buffers should fail when not connected"
+        "List buffers should fail with invalid connection ID"
     );
 
     // Now connect first, then test list buffers
@@ -288,18 +334,23 @@ async fn test_list_buffers_tool() -> Result<(), Box<dyn std::error::Error>> {
     let mut connect_args = Map::new();
     connect_args.insert("target".to_string(), Value::String(ipc_path.clone()));
 
-    let _connect_result = service
+    let connect_result = service
         .call_tool(CallToolRequestParam {
             name: "connect".into(),
             arguments: Some(connect_args),
         })
         .await?;
 
+    let connection_id = extract_connection_id(&connect_result)?;
+
     // Now test list buffers
+    let mut list_buffers_args = Map::new();
+    list_buffers_args.insert("connection_id".to_string(), Value::String(connection_id));
+
     let result = service
         .call_tool(CallToolRequestParam {
             name: "list_buffers".into(),
-            arguments: None,
+            arguments: Some(list_buffers_args),
         })
         .await?;
 
@@ -352,22 +403,32 @@ async fn test_complete_workflow() -> Result<(), Box<dyn std::error::Error>> {
     let mut connect_args = Map::new();
     connect_args.insert("target".to_string(), Value::String(ipc_path.clone()));
 
-    let result = service
+    let connect_result = service
         .call_tool(CallToolRequestParam {
             name: "connect".into(),
             arguments: Some(connect_args),
         })
         .await?;
 
-    assert!(!result.content.is_empty());
-    info!("✓ Connected successfully");
+    assert!(!connect_result.content.is_empty());
+    let connection_id = extract_connection_id(&connect_result)?;
+    info!(
+        "✓ Connected successfully with connection_id: {}",
+        connection_id
+    );
 
     // Step 2: List buffers
     info!("Step 2: Listing buffers");
+    let mut list_buffers_args = Map::new();
+    list_buffers_args.insert(
+        "connection_id".to_string(),
+        Value::String(connection_id.clone()),
+    );
+
     let result = service
         .call_tool(CallToolRequestParam {
             name: "list_buffers".into(),
-            arguments: None,
+            arguments: Some(list_buffers_args),
         })
         .await?;
 
@@ -376,10 +437,16 @@ async fn test_complete_workflow() -> Result<(), Box<dyn std::error::Error>> {
 
     // Step 3: Get LSP clients
     info!("Step 3: Getting LSP clients");
+    let mut lsp_clients_args = Map::new();
+    lsp_clients_args.insert(
+        "connection_id".to_string(),
+        Value::String(connection_id.clone()),
+    );
+
     let result = service
         .call_tool(CallToolRequestParam {
             name: "lsp_clients".into(),
-            arguments: None,
+            arguments: Some(lsp_clients_args),
         })
         .await?;
 
@@ -388,10 +455,16 @@ async fn test_complete_workflow() -> Result<(), Box<dyn std::error::Error>> {
 
     // Step 4: Disconnect
     info!("Step 4: Disconnecting from Neovim");
+    let mut disconnect_args = Map::new();
+    disconnect_args.insert(
+        "connection_id".to_string(),
+        Value::String(connection_id.clone()),
+    );
+
     let result = service
         .call_tool(CallToolRequestParam {
             name: "disconnect".into(),
-            arguments: None,
+            arguments: Some(disconnect_args),
         })
         .await?;
 
@@ -400,10 +473,13 @@ async fn test_complete_workflow() -> Result<(), Box<dyn std::error::Error>> {
 
     // Step 5: Verify we can't list buffers after disconnect
     info!("Step 5: Verifying disconnect");
+    let mut invalid_list_args = Map::new();
+    invalid_list_args.insert("connection_id".to_string(), Value::String(connection_id));
+
     let result = service
         .call_tool(CallToolRequestParam {
             name: "list_buffers".into(),
-            arguments: None,
+            arguments: Some(invalid_list_args),
         })
         .await;
 
@@ -446,7 +522,7 @@ async fn test_error_handling() -> Result<(), Box<dyn std::error::Error>> {
 
     let result = service
         .call_tool(CallToolRequestParam {
-            name: "connect_nvim_tcp".into(),
+            name: "connect_tcp".into(),
             arguments: Some(invalid_args),
         })
         .await;
@@ -456,7 +532,7 @@ async fn test_error_handling() -> Result<(), Box<dyn std::error::Error>> {
     // Test calling tools with missing arguments
     let result = service
         .call_tool(CallToolRequestParam {
-            name: "connect_nvim_tcp".into(),
+            name: "connect_tcp".into(),
             arguments: None,
         })
         .await;
@@ -501,6 +577,10 @@ async fn test_exec_lua_tool() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test exec_lua without connection (should fail)
     let mut lua_args = Map::new();
+    lua_args.insert(
+        "connection_id".to_string(),
+        Value::String("invalid_connection_id".to_string()),
+    );
     lua_args.insert("code".to_string(), Value::String("return 42".to_string()));
 
     let result = service
@@ -510,7 +590,10 @@ async fn test_exec_lua_tool() -> Result<(), Box<dyn std::error::Error>> {
         })
         .await;
 
-    assert!(result.is_err(), "exec_lua should fail when not connected");
+    assert!(
+        result.is_err(),
+        "exec_lua should fail with invalid connection ID"
+    );
 
     // Now connect first, then test exec_lua
     let ipc_path = generate_random_ipc_path();
@@ -520,15 +603,21 @@ async fn test_exec_lua_tool() -> Result<(), Box<dyn std::error::Error>> {
     let mut connect_args = Map::new();
     connect_args.insert("target".to_string(), Value::String(ipc_path.clone()));
 
-    let _connect_result = service
+    let connect_result = service
         .call_tool(CallToolRequestParam {
             name: "connect".into(),
             arguments: Some(connect_args),
         })
         .await?;
 
+    let connection_id = extract_connection_id(&connect_result)?;
+
     // Test successful Lua execution
     let mut lua_args = Map::new();
+    lua_args.insert(
+        "connection_id".to_string(),
+        Value::String(connection_id.clone()),
+    );
     lua_args.insert("code".to_string(), Value::String("return 42".to_string()));
 
     let result = service
@@ -555,6 +644,10 @@ async fn test_exec_lua_tool() -> Result<(), Box<dyn std::error::Error>> {
     // Test Lua execution with string result
     let mut lua_args = Map::new();
     lua_args.insert(
+        "connection_id".to_string(),
+        Value::String(connection_id.clone()),
+    );
+    lua_args.insert(
         "code".to_string(),
         Value::String("return 'hello world'".to_string()),
     );
@@ -571,6 +664,10 @@ async fn test_exec_lua_tool() -> Result<(), Box<dyn std::error::Error>> {
     // Test error handling for invalid Lua
     let mut invalid_lua_args = Map::new();
     invalid_lua_args.insert(
+        "connection_id".to_string(),
+        Value::String(connection_id.clone()),
+    );
+    invalid_lua_args.insert(
         "code".to_string(),
         Value::String("invalid lua syntax !!!".to_string()),
     );
@@ -586,6 +683,10 @@ async fn test_exec_lua_tool() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test error handling for empty code
     let mut empty_lua_args = Map::new();
+    empty_lua_args.insert(
+        "connection_id".to_string(),
+        Value::String(connection_id.clone()),
+    );
     empty_lua_args.insert("code".to_string(), Value::String("".to_string()));
 
     let result = service
@@ -597,11 +698,14 @@ async fn test_exec_lua_tool() -> Result<(), Box<dyn std::error::Error>> {
 
     assert!(result.is_err(), "Should fail for empty Lua code");
 
-    // Test missing arguments
+    // Test missing code argument
+    let mut missing_code_args = Map::new();
+    missing_code_args.insert("connection_id".to_string(), Value::String(connection_id));
+
     let result = service
         .call_tool(CallToolRequestParam {
             name: "exec_lua".into(),
-            arguments: None,
+            arguments: Some(missing_code_args),
         })
         .await;
 
@@ -632,16 +736,22 @@ async fn test_lsp_clients_tool() -> Result<(), Box<dyn std::error::Error>> {
         })?;
 
     // Test lsp_clients without connection (should fail)
+    let mut invalid_args = Map::new();
+    invalid_args.insert(
+        "connection_id".to_string(),
+        Value::String("invalid_connection_id".to_string()),
+    );
+
     let result = service
         .call_tool(CallToolRequestParam {
             name: "lsp_clients".into(),
-            arguments: None,
+            arguments: Some(invalid_args),
         })
         .await;
 
     assert!(
         result.is_err(),
-        "lsp_clients should fail when not connected"
+        "lsp_clients should fail with invalid connection ID"
     );
 
     // Now connect first, then test lsp_clients
@@ -652,18 +762,23 @@ async fn test_lsp_clients_tool() -> Result<(), Box<dyn std::error::Error>> {
     let mut connect_args = Map::new();
     connect_args.insert("target".to_string(), Value::String(ipc_path.clone()));
 
-    let _connect_result = service
+    let connect_result = service
         .call_tool(CallToolRequestParam {
             name: "connect".into(),
             arguments: Some(connect_args),
         })
         .await?;
 
+    let connection_id = extract_connection_id(&connect_result)?;
+
     // Now test lsp_clients
+    let mut lsp_clients_args = Map::new();
+    lsp_clients_args.insert("connection_id".to_string(), Value::String(connection_id));
+
     let result = service
         .call_tool(CallToolRequestParam {
             name: "lsp_clients".into(),
-            arguments: None,
+            arguments: Some(lsp_clients_args),
         })
         .await?;
 
@@ -706,21 +821,21 @@ async fn test_list_diagnostic_resources() -> Result<(), Box<dyn std::error::Erro
     let result = service.list_resources(None).await?;
     info!("List resources result: {:#?}", result);
 
-    // Verify we have the workspace diagnostics resource
+    // Verify we have the connections resource
     assert!(!result.resources.is_empty());
 
-    let workspace_resource = result
+    let connections_resource = result
         .resources
         .iter()
-        .find(|r| r.raw.uri == "nvim-diagnostics://workspace");
+        .find(|r| r.raw.uri == "nvim-connections://");
 
     assert!(
-        workspace_resource.is_some(),
-        "Should have workspace diagnostics resource"
+        connections_resource.is_some(),
+        "Should have connections resource"
     );
 
-    if let Some(resource) = workspace_resource {
-        assert_eq!(resource.raw.name, "Workspace Diagnostics");
+    if let Some(resource) = connections_resource {
+        assert_eq!(resource.raw.name, "Active Neovim Connections");
         assert!(resource.raw.description.is_some());
         assert_eq!(resource.raw.mime_type, Some("application/json".to_string()));
     }
@@ -756,17 +871,19 @@ async fn test_read_workspace_diagnostics() -> Result<(), Box<dyn std::error::Err
     let mut connect_args = Map::new();
     connect_args.insert("target".to_string(), Value::String(ipc_path.clone()));
 
-    let _connect_result = service
+    let connect_result = service
         .call_tool(CallToolRequestParam {
             name: "connect".into(),
             arguments: Some(connect_args),
         })
         .await?;
 
+    let connection_id = extract_connection_id(&connect_result)?;
+
     // Test read workspace diagnostics resource
     let result = service
         .read_resource(ReadResourceRequestParam {
-            uri: "nvim-diagnostics://workspace".to_string(),
+            uri: format!("nvim-diagnostics://{connection_id}/workspace"),
         })
         .await?;
 
@@ -785,16 +902,16 @@ async fn test_read_workspace_diagnostics() -> Result<(), Box<dyn std::error::Err
     // Test reading invalid resource URI
     let result = service
         .read_resource(ReadResourceRequestParam {
-            uri: "nvim-diagnostics://invalid".to_string(),
+            uri: "nvim-diagnostics://invalid/workspace".to_string(),
         })
         .await;
 
-    assert!(result.is_err(), "Should fail for invalid resource URI");
+    assert!(result.is_err(), "Should fail for invalid connection ID");
 
     // Test reading buffer diagnostics resource
     let result = service
         .read_resource(ReadResourceRequestParam {
-            uri: "nvim-diagnostics://buffer/1".to_string(),
+            uri: format!("nvim-diagnostics://{connection_id}/buffer/1"),
         })
         .await?;
 
@@ -804,7 +921,7 @@ async fn test_read_workspace_diagnostics() -> Result<(), Box<dyn std::error::Err
     // Test invalid buffer ID
     let result = service
         .read_resource(ReadResourceRequestParam {
-            uri: "nvim-diagnostics://buffer/invalid".to_string(),
+            uri: format!("nvim-diagnostics://{connection_id}/buffer/invalid"),
         })
         .await;
 

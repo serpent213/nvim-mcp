@@ -3,12 +3,15 @@ use rmcp::{
     ErrorData as McpError, ServerHandler,
     model::*,
     service::{RequestContext, RoleServer},
+    tool_handler,
 };
 use serde_json::json;
 use tracing::{debug, instrument};
 
 use super::core::NeovimMcpServer;
 
+// tool_handler macro automatically generates the necessary boilerplate
+#[tool_handler]
 impl ServerHandler for NeovimMcpServer {
     #[instrument(skip(self))]
     fn get_info(&self) -> ServerInfo {

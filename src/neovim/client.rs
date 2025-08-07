@@ -645,7 +645,7 @@ where
         }
     }
 
-    #[allow(dead_code)]
+    #[instrument(skip(self))]
     async fn lsp_make_text_document_params(
         &self,
         buffer_id: u64,
@@ -679,7 +679,6 @@ where
         }
     }
 
-    #[allow(dead_code)]
     #[instrument(skip(self))]
     pub async fn lsp_get_code_actions(
         &self,
