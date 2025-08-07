@@ -24,30 +24,25 @@ connections and access diagnostic information via structured resources.
 ### From Source
 
 ```bash
-git clone https://github.com/linw1995/nvim-mcp.git
-cd nvim-mcp
-cargo build --release
+git clone https://github.com/linw1995/nvim-mcp.git && cd nvim-mcp
+cargo install --path .
 ```
 
 ### Using Nix
 
 ```bash
-nix run github:linw1995/nvim-mcp
+nix profile install github:linw1995/nvim-mcp#nvim-mcp
 ```
 
 ## Quick Start
 
-### 1. Install and Start the Server
+### 1. Start the Server
 
 ```bash
-# Run the MCP server
-cargo run --release
-
+# Start as stdio MCP server (default)
+nvim-mcp
 # With custom logging
-cargo run --release -- --log-file ./nvim-mcp.log --log-level debug
-
-# Using Nix
-nix run .
+nvim-mcp --log-file ./nvim-mcp.log --log-level debug
 ```
 
 #### Command Line Options
@@ -65,14 +60,14 @@ With a plugin manager like `lazy.nvim`:
 ```lua
 return {
     "linw1995/nvim-mcp",
-    -- install the mcp server binary
+    -- install the mcp server binary automatically
     -- build = "cargo install --path .",
     build = "nix profile install .#nvim-mcp",
     opts = {},
 }
 ```
 
-This automatically creates a Unix socket/pipe for MCP connections.
+This plugin automatically creates a Unix socket/pipe for MCP connections.
 
 #### Option B: Manual TCP Setup
 
@@ -294,13 +289,16 @@ nix develop . --command cargo test -- --show-output --test-threads 1
 ### Building and Running
 
 ```bash
-# Development
-cargo build && cargo run
+# Build debug version
+cargo build
 
-# Production
-cargo build --release
+# Build and run debug version
+cargo run
 
-# With custom logging
+# Build and run release version
+cargo run --release
+
+# Build and run with custom logging
 cargo run -- --log-file ./debug.log --log-level debug
 
 # Using Nix
