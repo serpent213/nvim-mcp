@@ -65,7 +65,7 @@ With a plugin manager like `lazy.nvim`:
 ```lua
 return {
     "linw1995/nvim-mcp",
-    dir = ".",
+    -- install the mcp server binary
     -- build = "cargo install --path .",
     build = "nix profile install .#nvim-mcp",
     opts = {},
@@ -320,7 +320,3 @@ return {
     },
 }
 ```
-
-## License
-
-MIT
