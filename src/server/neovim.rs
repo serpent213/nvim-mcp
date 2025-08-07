@@ -33,37 +33,6 @@ pub struct ConnectNvimRequest {
     pub target: String,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ExecuteLuaRequest {
-    /// Lua code to execute in Neovim
-    pub code: String,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct BufferId {
-    /// Neovim Buffer ID
-    pub id: u64,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct BufferLSPParams {
-    /// Neovim Buffer ID
-    pub id: u64,
-    /// Lsp client name
-    pub lsp_client_name: String,
-    /// Cursor start position in the buffer, line number starts from 0
-    pub line: u64,
-    /// Cursor start position in the buffer, character number starts from 0
-    pub character: u64,
-    /// Cursor end position in the buffer, line number starts from 0
-    pub end_line: u64,
-    /// Cursor end position in the buffer, character number starts from 0
-    pub end_character: u64,
-}
-
 /// New parameter struct for connection-aware requests
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ConnectionRequest {
@@ -130,7 +99,7 @@ impl NeovimMcpServer {
         &self,
         Parameters(ConnectNvimRequest { target: path }): Parameters<ConnectNvimRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let connection_id = self.generate_connection_id(&path);
+        let connection_id = self.generate_shorter_connection_id(&path);
 
         let mut client = NeovimClient::new();
         client.connect_path(&path).await?;
@@ -154,7 +123,7 @@ impl NeovimMcpServer {
         &self,
         Parameters(ConnectNvimRequest { target: address }): Parameters<ConnectNvimRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let connection_id = self.generate_connection_id(&address);
+        let connection_id = self.generate_shorter_connection_id(&address);
 
         let mut client = NeovimClient::new();
         client.connect_tcp(&address).await?;
@@ -312,9 +281,33 @@ impl NeovimMcpServer {
         &self.tool_router
     }
 
-    /// Generate deterministic connection ID from target checksum
-    fn generate_connection_id(&self, target: &str) -> String {
-        blake3::hash(target.as_bytes()).to_hex().to_string()
+    /// Generate shorter connection ID with collision detection
+    fn generate_shorter_connection_id(&self, target: &str) -> String {
+        let full_hash = b3sum(target);
+        let id_length = 7;
+
+        // Try different starting positions in the hash for 7-char IDs
+        for start in 0..=(full_hash.len().saturating_sub(id_length)) {
+            let candidate = &full_hash[start..start + id_length];
+
+            if let Some(existing_client) = self.nvim_clients.get(candidate) {
+                // Check if the existing connection has the same target
+                if let Some(existing_target) = existing_client.target() {
+                    if existing_target == target {
+                        // Same target, return existing connection ID (connection replacement)
+                        return candidate.to_string();
+                    }
+                }
+                // Different target, continue looking for another ID
+                continue;
+            }
+
+            // No existing connection with this ID, safe to use
+            return candidate.to_string();
+        }
+
+        // Fallback to full hash if somehow all combinations are taken
+        full_hash
     }
 
     /// Get connection by ID with proper error handling
@@ -336,6 +329,11 @@ impl Default for NeovimMcpServer {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Generate BLAKE3 hash from input string
+fn b3sum(input: &str) -> String {
+    blake3::hash(input.as_bytes()).to_hex().to_string()
 }
 
 /// Escape path for use in filename by replacing problematic characters

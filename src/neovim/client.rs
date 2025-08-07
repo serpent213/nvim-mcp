@@ -101,7 +101,7 @@ pub struct Diagnostic {
     pub end_lnum: u64,
     pub end_col: u64,
     pub namespace: u64,
-    pub user_data: UserData,
+    pub user_data: Option<UserData>,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -716,7 +716,7 @@ where
                             context: CodeActionContext {
                                 diagnostics: diagnostics
                                     .into_iter()
-                                    .map(|d| d.user_data.lsp)
+                                    .filter_map(|d| d.user_data.map(|u| u.lsp))
                                     .collect(),
                                 only: None,
                                 trigger_kind: None,
