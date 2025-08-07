@@ -34,6 +34,12 @@ repos:
     hooks:
       - id: stylua # or stylua-system / stylua-github
 
+  # Markdown-specific hooks
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.18.1
+    hooks:
+      - id: markdownlint-cli2
+
 # Configuration for specific hooks
 default_stages: [pre-commit]
 fail_fast: false

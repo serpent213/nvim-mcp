@@ -151,9 +151,11 @@ use tracing::{debug, error, info, span, warn, Level};
 pub fn shave(yak: usize) -> Result<(), Box<dyn Error + 'static>> {
     // this creates an event at the DEBUG level with two fields:
     // - `excitement`, with the key "excitement" and the value "yay!"
-    // - `message`, with the key "message" and the value "hello! I'm gonna shave a yak."
+    // - `message`, with the key "message" and the value
+    //   "hello! I'm gonna shave a yak."
     //
-    // unlike other fields, `message`'s shorthand initialization is just the string itself.
+    // unlike other fields, `message`'s shorthand initialization is just the
+    // string itself.
     debug!(excitement = "yay!", "hello! I'm gonna shave a yak.");
     if yak == 3 {
         warn!("could not locate yak!");
