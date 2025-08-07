@@ -1,7 +1,8 @@
-pub(crate) mod neovim;
-mod neovim_handler;
+pub(crate) mod core;
+mod resources;
+pub(crate) mod tools;
 
 #[cfg(test)]
 mod integration_tests;
 
-pub use neovim::NeovimMcpServer;
+pub use core::NeovimMcpServer;

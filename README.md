@@ -13,6 +13,7 @@ connections and access diagnostic information via structured resources.
 - **MCP Resources**: Structured diagnostic data via `nvim-diagnostics://` URI scheme
 - **Lua Execution**: Execute arbitrary Lua code directly in Neovim
 - **Plugin Integration**: Automatic setup through Neovim plugin
+- **Modular Architecture**: Clean separation between core infrastructure, MCP tools, and resource handlers
 
 ## Installation
 

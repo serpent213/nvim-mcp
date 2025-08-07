@@ -3,14 +3,12 @@ use rmcp::{
     ErrorData as McpError, ServerHandler,
     model::*,
     service::{RequestContext, RoleServer},
-    tool_handler,
 };
 use serde_json::json;
 use tracing::{debug, instrument};
 
-use super::neovim::NeovimMcpServer;
+use super::core::NeovimMcpServer;
 
-#[tool_handler]
 impl ServerHandler for NeovimMcpServer {
     #[instrument(skip(self))]
     fn get_info(&self) -> ServerInfo {
@@ -22,6 +20,7 @@ impl ServerHandler for NeovimMcpServer {
         }
     }
 
+    #[instrument(skip(self))]
     async fn list_resources(
         &self,
         _request: Option<PaginatedRequestParam>,
@@ -63,6 +62,7 @@ impl ServerHandler for NeovimMcpServer {
         })
     }
 
+    #[instrument(skip(self))]
     async fn read_resource(
         &self,
         ReadResourceRequestParam { uri }: ReadResourceRequestParam,

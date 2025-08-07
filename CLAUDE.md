@@ -67,11 +67,27 @@ The codebase follows a layered architecture:
 
 ### Core Components
 
-- **`src/server/neovim.rs`**: Main MCP server implementation (`NeovimMcpServer`)
+The codebase follows a modular architecture with clear separation of concerns:
+
+- **`src/server/core.rs`**: Core infrastructure and server foundation
+  - Contains `NeovimMcpServer` struct and core methods
   - Manages multiple concurrent connections via
     `Arc<DashMap<String, Box<dyn NeovimClientTrait + Send>>>`
+  - Handles multi-connection lifecycle with deterministic connection IDs
+  - Provides utility functions (BLAKE3 hashing, socket discovery, etc.)
+  - Error conversion between `NeovimError` and `McpError`
+
+- **`src/server/tools.rs`**: MCP tool implementations
   - Implements eight MCP tools using the `#[tool]` attribute
-  - Handles multi-connection lifecycle and tool routing with deterministic connection IDs
+  - Contains parameter structs for tool requests
+  - Focuses purely on MCP tool logic and protocol implementation
+  - Clean separation from core infrastructure
+
+- **`src/server/resources.rs`**: MCP resource handlers
+  - Implements `ServerHandler` trait for MCP capabilities
+  - Provides server metadata, tool discovery, and resource handling
+  - Supports `nvim-diagnostics://` URI scheme for diagnostic resources
+  - Handles resource listing and reading operations
 
 - **`src/neovim/client.rs`**: Neovim client abstraction layer
   - Implements `NeovimClientTrait` for unified client interface
@@ -83,10 +99,16 @@ The codebase follows a layered architecture:
   - Wraps `nvim-rs` client with lifecycle management
   - Tracks connection address and background I/O tasks
 
-- **`src/server/neovim_handler.rs`**: MCP protocol handler
-  - Implements `ServerHandler` trait for MCP capabilities
-  - Provides server metadata, tool discovery, and resource handling
-  - Supports `nvim-diagnostics://` URI scheme for diagnostic resources
+### Architecture Benefits
+
+This modular architecture provides several advantages:
+
+- **Clear Separation of Concerns**: Core infrastructure, MCP tools, and resource handlers are cleanly separated
+- **Easier Maintenance**: Each file has a single, well-defined responsibility
+- **Better Testing**: Components can be tested independently with focused unit tests
+- **Improved Readability**: Developers can quickly find relevant code based on functionality
+- **Scalable Development**: New tools and resources can be added without affecting core logic
+- **Reduced Coupling**: Changes to tool implementations don't impact core server infrastructure
 
 ### Data Flow
 
@@ -188,30 +210,54 @@ BLAKE3 hashes of the target string for consistent identification.
 
 To add a new connection-aware tool to the server:
 
-1. Add a new method to `NeovimMcpServer` in `src/server/neovim.rs`
-2. Use the `#[tool(description = "...")]` attribute with `#[instrument(skip(self))]`
-3. Define request parameter structs with `serde::Deserialize` and
+1. **Add parameter struct** in `src/server/tools.rs` with `serde::Deserialize` and
    `schemars::JsonSchema` derives
    - **For connection-aware tools**: Include `connection_id: String` parameter
    - **For connection management**: Use existing parameter types or create new ones
-4. Return `Result<CallToolResult, McpError>` and use `NeovimError::from()`
-   for error conversion
-5. **Connection validation**: Use `self.get_connection(&connection_id)?` to validate
-   and retrieve the specific Neovim connection
-6. **Tool implementation**: Use the retrieved client reference for Neovim operations
-7. Update integration tests in `src/server/integration_tests.rs`
-8. Register the tool by adding it to the `tool_router!` macro in server initialization
+
+2. **Add tool method** to `NeovimMcpServer` impl in `src/server/tools.rs`
+   - Use the `#[tool(description = "...")]` attribute with `#[instrument(skip(self))]`
+   - Return `Result<CallToolResult, McpError>`
+   - Import `NeovimMcpServer` from `super::core`
+
+3. **Connection validation**: Use `self.get_connection(&connection_id)?` to validate
+   and retrieve the specific Neovim connection (method available from core)
+
+4. **Tool implementation**: Use the retrieved client reference for Neovim operations
+
+5. **Testing**: Update integration tests in `src/server/integration_tests.rs`
+
+6. **Registration**: The tool is automatically registered by the `#[tool_router]` macro
 
 **Example connection-aware tool pattern:**
 ```rust
+// In src/server/tools.rs
+
+/// Your parameter struct
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct YourConnectionRequest {
+    /// Unique identifier for the target Neovim instance
+    pub connection_id: String,
+    // Add other parameters as needed
+}
+
+// In the NeovimMcpServer impl block
 #[tool(description = "Your tool description")]
+#[instrument(skip(self))]
 pub async fn your_tool(
     &self,
-    Parameters(YourConnectionRequest { connection_id, other_params }): Parameters<YourConnectionRequest>,
+    Parameters(YourConnectionRequest { connection_id, /* other_params */ }): Parameters<YourConnectionRequest>,
 ) -> Result<CallToolResult, McpError> {
     let client = self.get_connection(&connection_id)?;
     // Use client for Neovim operations...
+    Ok(CallToolResult::success(vec![Content::json(result)?]))
 }
+```
+
+**Required imports in tools.rs:**
+```rust
+use super::core::{NeovimMcpServer, /* other utilities */};
+use rmcp::{ErrorData as McpError, /* other MCP types */};
 ```
 
 ## Development Environment
