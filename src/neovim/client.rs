@@ -10,7 +10,7 @@ use super::{connection::NeovimConnection, error::NeovimError};
 
 /// Common trait for Neovim client operations
 #[async_trait]
-pub trait NeovimClientTrait {
+pub trait NeovimClientTrait: Sync {
     /// Get the target of the Neovim connection
     fn target(&self) -> Option<String>;
 

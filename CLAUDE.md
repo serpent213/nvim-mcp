@@ -68,10 +68,10 @@ The codebase follows a layered architecture:
 ### Core Components
 
 - **`src/server/neovim.rs`**: Main MCP server implementation (`NeovimMcpServer`)
-  - Manages connections to Neovim via
-    `Arc<Mutex<Option<Box<dyn NeovimClientTrait + Send>>>>`
-  - Implements seven MCP tools using the `#[tool]` attribute
-  - Handles connection lifecycle and tool routing
+  - Manages multiple concurrent connections via
+    `Arc<DashMap<String, Box<dyn NeovimClientTrait + Send>>>`
+  - Implements eight MCP tools using the `#[tool]` attribute
+  - Handles multi-connection lifecycle and tool routing with deterministic connection IDs
 
 - **`src/neovim/client.rs`**: Neovim client abstraction layer
   - Implements `NeovimClientTrait` for unified client interface
@@ -99,33 +99,62 @@ The codebase follows a layered architecture:
 
 ### Connection Management
 
-- Only one active Neovim connection allowed at a time
-- Thread-safe access using `Arc<Mutex<>>`
-- Proper cleanup of TCP connections and background tasks
-- Connection validation before tool execution
+- **Multi-connection support**: Multiple concurrent Neovim instances managed simultaneously
+- **Thread-safe access** using `Arc<DashMap<String, Box<dyn NeovimClientTrait + Send>>>`
+- **Deterministic connection IDs** generated using BLAKE3 hash of target string
+- **Connection isolation**: Each connection operates independently with proper session isolation
+- **Proper cleanup** of TCP connections and background tasks on disconnect
+- **Connection validation** before tool execution using connection ID lookup
+
+### Multi-Connection Architecture Benefits
+
+**Performance Advantages:**
+- **Lock-free reads**: DashMap enables concurrent read access without blocking
+- **Fine-grained locking**: Only write operations require locks, not entire connection map access
+- **Fast hashing**: BLAKE3 provides extremely fast deterministic connection ID generation
+- **Independent operations**: Each connection operates concurrently without affecting others
+
+**Reliability Features:**
+- **Deterministic IDs**: Same target always produces same connection ID for predictable behavior
+- **Connection replacement**: Connecting to existing target gracefully replaces previous connection
+- **Session isolation**: Connections don't interfere with each other's state
+- **Graceful cleanup**: Proper resource deallocation on disconnect prevents memory leaks
+
+**Developer Experience:**
+- **Predictable workflow**: Connection IDs are consistent across sessions
+- **Clear separation**: Connection-scoped resources eliminate ambiguity
+- **Concurrent debugging**: Multiple development environments can run simultaneously
 
 ### Available MCP Tools
 
 The server provides these tools (implemented with `#[tool]` attribute):
 
-1. **`connect`**: Connect via Unix socket/named pipe
-2. **`connect_tcp`**: Connect via TCP address
-3. **`disconnect`**: Disconnect from current Neovim instance
-4. **`list_buffers`**: List all open buffers with details
-5. **`exec_lua`**: Execute arbitrary Lua code in Neovim
-6. **`buffer_diagnostics`**: Get diagnostics for specific buffer
-7. **`lsp_clients`**: Get workspace LSP clients
-8. **`buffer_code_actions`**: Get LSP code actions for buffer range
+**Connection Management:**
+1. **`connect`**: Connect via Unix socket/named pipe, returns deterministic `connection_id`
+2. **`connect_tcp`**: Connect via TCP address, returns deterministic `connection_id`
+3. **`disconnect`**: Disconnect from specific Neovim instance by `connection_id`
+
+**Connection-Aware Tools** (require `connection_id` parameter):
+4. **`list_buffers`**: List all open buffers for specific connection
+5. **`exec_lua`**: Execute arbitrary Lua code in specific Neovim instance
+6. **`buffer_diagnostics`**: Get diagnostics for specific buffer on specific connection
+7. **`lsp_clients`**: Get workspace LSP clients for specific connection
+8. **`buffer_code_actions`**: Get LSP code actions for buffer range on specific connection
 
 ### MCP Resources
 
-The server provides diagnostic resources via `nvim-diagnostics://` URI scheme:
+The server provides connection-aware resources via multiple URI schemes:
 
-- **`nvim-diagnostics://workspace`**: All diagnostic messages across workspace
-- **`nvim-diagnostics://buffer/{buffer_id}`**: Diagnostics for specific buffer
+**Connection Management:**
+- **`nvim-connections://`**: Lists all active Neovim connections with their IDs and targets
+
+**Connection-Scoped Diagnostics** via `nvim-diagnostics://` URI scheme:
+- **`nvim-diagnostics://{connection_id}/workspace`**: All diagnostic messages across workspace for specific connection
+- **`nvim-diagnostics://{connection_id}/buffer/{buffer_id}`**: Diagnostics for specific buffer on specific connection
 
 Resources return structured JSON with diagnostic information including severity,
-messages, file paths, and line/column positions.
+messages, file paths, and line/column positions. Connection IDs are deterministic
+BLAKE3 hashes of the target string for consistent identification.
 
 ## Key Dependencies
 
@@ -135,6 +164,11 @@ messages, file paths, and line/column positions.
 - **`tracing`**: Structured logging with subscriber and appender support
 - **`clap`**: CLI argument parsing with derive features
 - **`thiserror`**: Ergonomic error handling and error type derivation
+
+**Multi-Connection Support Dependencies:**
+- **`dashmap`**: Lock-free concurrent HashMap for connection storage
+- **`regex`**: Pattern matching for connection-scoped resource URI parsing
+- **`blake3`**: Fast, deterministic hashing for connection ID generation
 
 ## Testing Architecture
 
@@ -152,17 +186,33 @@ messages, file paths, and line/column positions.
 
 ## Adding New MCP Tools
 
-To add a new tool to the server:
+To add a new connection-aware tool to the server:
 
 1. Add a new method to `NeovimMcpServer` in `src/server/neovim.rs`
 2. Use the `#[tool(description = "...")]` attribute with `#[instrument(skip(self))]`
 3. Define request parameter structs with `serde::Deserialize` and
    `schemars::JsonSchema` derives
+   - **For connection-aware tools**: Include `connection_id: String` parameter
+   - **For connection management**: Use existing parameter types or create new ones
 4. Return `Result<CallToolResult, McpError>` and use `NeovimError::from()`
    for error conversion
-5. Add connection validation: check if client is connected before operations
-6. Update integration tests in `src/server/integration_tests.rs`
-7. Register the tool by adding it to the `tool_router!` macro in server initialization
+5. **Connection validation**: Use `self.get_connection(&connection_id)?` to validate
+   and retrieve the specific Neovim connection
+6. **Tool implementation**: Use the retrieved client reference for Neovim operations
+7. Update integration tests in `src/server/integration_tests.rs`
+8. Register the tool by adding it to the `tool_router!` macro in server initialization
+
+**Example connection-aware tool pattern:**
+```rust
+#[tool(description = "Your tool description")]
+pub async fn your_tool(
+    &self,
+    Parameters(YourConnectionRequest { connection_id, other_params }): Parameters<YourConnectionRequest>,
+) -> Result<CallToolResult, McpError> {
+    let client = self.get_connection(&connection_id)?;
+    // Use client for Neovim operations...
+}
+```
 
 ## Development Environment
 

@@ -40,6 +40,11 @@ serde_json = "1.0.141"
 # File System Operations
 glob = "0.3"
 
+# Multi-connection Support
+dashmap = "6.1"
+regex = "1.11"
+blake3 = "1.5"
+
 [dev-dependencies]
 tracing-test = "0.2"
 rand = "0.9.2"

@@ -1,3 +1,4 @@
+use regex::Regex;
 use rmcp::{
     ErrorData as McpError, ServerHandler,
     model::*,
@@ -28,17 +29,36 @@ impl ServerHandler for NeovimMcpServer {
     ) -> Result<ListResourcesResult, McpError> {
         debug!("Listing available diagnostic resources");
 
-        Ok(ListResourcesResult {
-            resources: vec![Resource {
+        let mut resources = vec![Resource {
+            raw: RawResource {
+                uri: "nvim-connections://".to_string(),
+                name: "Active Neovim Connections".to_string(),
+                description: Some("List of active Neovim connections".to_string()),
+                mime_type: Some("application/json".to_string()),
+                size: None,
+            },
+            annotations: None,
+        }];
+
+        // Add connection-specific workspace resources
+        for connection_entry in self.nvim_clients.iter() {
+            let connection_id = connection_entry.key().clone();
+            resources.push(Resource {
                 raw: RawResource {
-                    uri: "nvim-diagnostics://workspace".to_string(),
-                    name: "Workspace Diagnostics".to_string(),
-                    description: Some("All diagnostic messages across the workspace".to_string()),
+                    uri: format!("nvim-diagnostics://{connection_id}/workspace"),
+                    name: format!("Workspace Diagnostics ({connection_id})"),
+                    description: Some(format!(
+                        "Diagnostic messages for connection {connection_id}"
+                    )),
                     mime_type: Some("application/json".to_string()),
                     size: None,
                 },
                 annotations: None,
-            }],
+            });
+        }
+
+        Ok(ListResourcesResult {
+            resources,
             next_cursor: None,
         })
     }
@@ -51,18 +71,24 @@ impl ServerHandler for NeovimMcpServer {
         debug!("Reading resource: {}", uri);
 
         match uri.as_str() {
-            uri if uri.starts_with("nvim-diagnostics://buffer/") => {
-                let buffer_id = uri
-                    .strip_prefix("nvim-diagnostics://buffer/")
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .ok_or_else(|| McpError::invalid_params("Invalid buffer ID", None))?;
+            "nvim-connections://" => {
+                let connections: Vec<_> = self
+                    .nvim_clients
+                    .iter()
+                    .map(|entry| {
+                        json!({
+                            "id": entry.key(),
+                            "target": entry.value().target()
+                                .unwrap_or_else(|| "Unknown".to_string())
+                        })
+                    })
+                    .collect();
 
-                let diagnostics = self.get_buffer_diagnostics(buffer_id).await?;
                 Ok(ReadResourceResult {
                     contents: vec![ResourceContents::text(
-                        serde_json::to_string_pretty(&diagnostics).map_err(|e| {
+                        serde_json::to_string_pretty(&connections).map_err(|e| {
                             McpError::internal_error(
-                                "Failed to serialize diagnostics",
+                                "Failed to serialize connections",
                                 Some(json!({"error": e.to_string()})),
                             )
                         })?,
@@ -70,19 +96,69 @@ impl ServerHandler for NeovimMcpServer {
                     )],
                 })
             }
-            "nvim-diagnostics://workspace" => {
-                let diagnostics = self.get_workspace_diagnostics().await?;
-                Ok(ReadResourceResult {
-                    contents: vec![ResourceContents::text(
-                        serde_json::to_string_pretty(&diagnostics).map_err(|e| {
-                            McpError::internal_error(
-                                "Failed to serialize workspace diagnostics",
-                                Some(json!({"error": e.to_string()})),
-                            )
-                        })?,
-                        uri,
-                    )],
-                })
+            uri if uri.starts_with("nvim-diagnostics://") => {
+                // Parse connection_id from URI pattern using regex
+                let connection_diagnostics_regex = Regex::new(r"nvim-diagnostics://([^/]+)/(.+)")
+                    .map_err(|e| {
+                    McpError::internal_error(
+                        "Failed to compile regex",
+                        Some(json!({"error": e.to_string()})),
+                    )
+                })?;
+
+                if let Some(captures) = connection_diagnostics_regex.captures(uri) {
+                    let connection_id = captures.get(1).unwrap().as_str();
+                    let resource_type = captures.get(2).unwrap().as_str();
+
+                    let client = self.get_connection(connection_id)?;
+
+                    match resource_type {
+                        "workspace" => {
+                            let diagnostics = client.get_workspace_diagnostics().await?;
+                            Ok(ReadResourceResult {
+                                contents: vec![ResourceContents::text(
+                                    serde_json::to_string_pretty(&diagnostics).map_err(|e| {
+                                        McpError::internal_error(
+                                            "Failed to serialize workspace diagnostics",
+                                            Some(json!({"error": e.to_string()})),
+                                        )
+                                    })?,
+                                    uri,
+                                )],
+                            })
+                        }
+                        path if path.starts_with("buffer/") => {
+                            let buffer_id = path
+                                .strip_prefix("buffer/")
+                                .and_then(|s| s.parse::<u64>().ok())
+                                .ok_or_else(|| {
+                                    McpError::invalid_params("Invalid buffer ID", None)
+                                })?;
+
+                            let diagnostics = client.get_buffer_diagnostics(buffer_id).await?;
+                            Ok(ReadResourceResult {
+                                contents: vec![ResourceContents::text(
+                                    serde_json::to_string_pretty(&diagnostics).map_err(|e| {
+                                        McpError::internal_error(
+                                            "Failed to serialize buffer diagnostics",
+                                            Some(json!({"error": e.to_string()})),
+                                        )
+                                    })?,
+                                    uri,
+                                )],
+                            })
+                        }
+                        _ => Err(McpError::resource_not_found(
+                            "resource_not_found",
+                            Some(json!({"uri": uri})),
+                        )),
+                    }
+                } else {
+                    Err(McpError::resource_not_found(
+                        "resource_not_found",
+                        Some(json!({"uri": uri})),
+                    ))
+                }
             }
             _ => Err(McpError::resource_not_found(
                 "resource_not_found",
