@@ -14,8 +14,11 @@ impl ServerHandler for NeovimMcpServer {
     fn get_info(&self) -> ServerInfo {
         debug!("Providing server information");
         ServerInfo {
-            instructions: Some("Neovim API integration server providing TCP connection management, buffer operations, Lua execution capabilities, and diagnostic resources through the nvim-diagnostics:// URI scheme.".to_string()),
-            capabilities: ServerCapabilities::builder().enable_tools().enable_resources().build(),
+            instructions: Some(include_str!("../../docs/instructions.md").to_string()),
+            capabilities: ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
             ..Default::default()
         }
     }

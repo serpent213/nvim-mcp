@@ -103,12 +103,15 @@ The codebase follows a modular architecture with clear separation of concerns:
 
 This modular architecture provides several advantages:
 
-- **Clear Separation of Concerns**: Core infrastructure, MCP tools, and resource handlers are cleanly separated
+- **Clear Separation of Concerns**: Core infrastructure, MCP tools, and
+  resource handlers are cleanly separated
 - **Easier Maintenance**: Each file has a single, well-defined responsibility
 - **Better Testing**: Components can be tested independently with focused unit tests
 - **Improved Readability**: Developers can quickly find relevant code based on functionality
-- **Scalable Development**: New tools and resources can be added without affecting core logic
-- **Reduced Coupling**: Changes to tool implementations don't impact core server infrastructure
+- **Scalable Development**: New tools and resources can be added without
+  affecting core logic
+- **Reduced Coupling**: Changes to tool implementations don't impact core
+  server infrastructure
 
 ### Data Flow
 
@@ -124,25 +127,34 @@ This modular architecture provides several advantages:
 - **Multi-connection support**: Multiple concurrent Neovim instances managed simultaneously
 - **Thread-safe access** using `Arc<DashMap<String, Box<dyn NeovimClientTrait + Send>>>`
 - **Deterministic connection IDs** generated using BLAKE3 hash of target string
-- **Connection isolation**: Each connection operates independently with proper session isolation
+- **Connection isolation**: Each connection operates independently with
+  proper session isolation
 - **Proper cleanup** of TCP connections and background tasks on disconnect
 - **Connection validation** before tool execution using connection ID lookup
 
 ### Multi-Connection Architecture Benefits
 
 **Performance Advantages:**
+
 - **Lock-free reads**: DashMap enables concurrent read access without blocking
-- **Fine-grained locking**: Only write operations require locks, not entire connection map access
+- **Fine-grained locking**: Only write operations require locks, not
+  entire connection map access
 - **Fast hashing**: BLAKE3 provides extremely fast deterministic connection ID generation
-- **Independent operations**: Each connection operates concurrently without affecting others
+- **Independent operations**: Each connection operates concurrently
+  without affecting others
 
 **Reliability Features:**
-- **Deterministic IDs**: Same target always produces same connection ID for predictable behavior
-- **Connection replacement**: Connecting to existing target gracefully replaces previous connection
+
+- **Deterministic IDs**: Same target always produces same connection ID
+  for predictable behavior
+- **Connection replacement**: Connecting to existing target gracefully
+  replaces previous connection
 - **Session isolation**: Connections don't interfere with each other's state
-- **Graceful cleanup**: Proper resource deallocation on disconnect prevents memory leaks
+- **Graceful cleanup**: Proper resource deallocation on disconnect
+  prevents memory leaks
 
 **Developer Experience:**
+
 - **Predictable workflow**: Connection IDs are consistent across sessions
 - **Clear separation**: Connection-scoped resources eliminate ambiguity
 - **Concurrent debugging**: Multiple development environments can run simultaneously
@@ -152,6 +164,7 @@ This modular architecture provides several advantages:
 The server provides these tools (implemented with `#[tool]` attribute):
 
 **Connection Management:**
+
 1. **`connect`**: Connect via Unix socket/named pipe, returns deterministic `connection_id`
 2. **`connect_tcp`**: Connect via TCP address, returns deterministic `connection_id`
 3. **`disconnect`**: Disconnect from specific Neovim instance by `connection_id`
@@ -168,11 +181,16 @@ The server provides these tools (implemented with `#[tool]` attribute):
 The server provides connection-aware resources via multiple URI schemes:
 
 **Connection Management:**
-- **`nvim-connections://`**: Lists all active Neovim connections with their IDs and targets
+
+- **`nvim-connections://`**: Lists all active Neovim connections with
+  their IDs and targets
 
 **Connection-Scoped Diagnostics** via `nvim-diagnostics://` URI scheme:
-- **`nvim-diagnostics://{connection_id}/workspace`**: All diagnostic messages across workspace for specific connection
-- **`nvim-diagnostics://{connection_id}/buffer/{buffer_id}`**: Diagnostics for specific buffer on specific connection
+
+- **`nvim-diagnostics://{connection_id}/workspace`**: All diagnostic
+  messages across workspace for specific connection
+- **`nvim-diagnostics://{connection_id}/buffer/{buffer_id}`**: Diagnostics
+  for specific buffer on specific connection
 
 Resources return structured JSON with diagnostic information including severity,
 messages, file paths, and line/column positions. Connection IDs are deterministic
@@ -188,6 +206,7 @@ BLAKE3 hashes of the target string for consistent identification.
 - **`thiserror`**: Ergonomic error handling and error type derivation
 
 **Multi-Connection Support Dependencies:**
+
 - **`dashmap`**: Lock-free concurrent HashMap for connection storage
 - **`regex`**: Pattern matching for connection-scoped resource URI parsing
 - **`blake3`**: Fast, deterministic hashing for connection ID generation
@@ -227,9 +246,11 @@ To add a new connection-aware tool to the server:
 
 5. **Testing**: Update integration tests in `src/server/integration_tests.rs`
 
-6. **Registration**: The tool is automatically registered by the `#[tool_router]` macro
+6. **Registration**: The tool is automatically registered by the
+   `#[tool_router]` macro
 
 **Example connection-aware tool pattern:**
+
 ```rust
 // In src/server/tools.rs
 
@@ -255,6 +276,7 @@ pub async fn your_tool(
 ```
 
 **Required imports in tools.rs:**
+
 ```rust
 use super::core::{NeovimMcpServer, /* other utilities */};
 use rmcp::{ErrorData as McpError, /* other MCP types */};

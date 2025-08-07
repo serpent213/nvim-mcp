@@ -13,7 +13,8 @@ connections and access diagnostic information via structured resources.
 - **MCP Resources**: Structured diagnostic data via `nvim-diagnostics://` URI scheme
 - **Lua Execution**: Execute arbitrary Lua code directly in Neovim
 - **Plugin Integration**: Automatic setup through Neovim plugin
-- **Modular Architecture**: Clean separation between core infrastructure, MCP tools, and resource handlers
+- **Modular Architecture**: Clean separation between core infrastructure,
+  MCP tools, and resource handlers
 
 ## Installation
 
@@ -61,6 +62,9 @@ With a plugin manager like `lazy.nvim`:
 ```lua
 return {
     "linw1995/nvim-mcp",
+    dir = ".",
+    -- build = "cargo install --path .",
+    build = "nix profile install .#nvim-mcp",
     opts = {},
 }
 ```
@@ -148,7 +152,7 @@ This project uses Nix flakes for reproducible development environments.
 nix develop .
 
 # Auto-activate with direnv (optional)
-echo 'use flake' > .envrc
+echo 'use flake' >.envrc
 ```
 
 ### Testing
