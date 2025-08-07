@@ -906,12 +906,14 @@ where
         }
     }
 
+    #[instrument(skip(self))]
     async fn lsp_get_code_actions(
         &self,
         client_name: &str,
         buffer_id: u64,
         range: Range,
     ) -> Result<Vec<CodeAction>, NeovimError> {
-        <NeovimClient<T>>::lsp_get_code_actions(self, client_name, buffer_id, range).await
+        self.lsp_get_code_actions(client_name, buffer_id, range)
+            .await
     }
 }

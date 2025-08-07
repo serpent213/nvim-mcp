@@ -86,6 +86,8 @@ The server provides these MCP tools for interacting with Neovim:
 
 ### Connection Management
 
+- **`get_targets`**: Get available Neovim targets
+  - Returns list of discoverable Neovim socket paths created by the plugin
 - **`connect`**: Connect via Unix socket/named pipe
   - Parameters: `target` (string) - Socket path
 - **`connect_tcp`**: Connect via TCP
