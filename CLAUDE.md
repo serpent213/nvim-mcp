@@ -6,11 +6,11 @@ with code in this repository.
 ## Project Overview
 
 This is a Rust-based Model Context Protocol (MCP) server that provides AI
-assistants with programmatic access to Neovim instances via TCP connections.
-The server implements seven core tools: TCP connection management, buffer
-listing, diagnostics access, LSP client integration, code actions, and Lua
-code execution. It also provides MCP resources for diagnostic information
-through the `nvim-diagnostics://` URI scheme.
+assistants with programmatic access to Neovim instances. The server supports
+both Unix socket/named pipe and TCP connections, implements eight core MCP
+tools for Neovim interaction, and provides diagnostic resources through the
+`nvim-diagnostics://` URI scheme. The project uses Rust 2024 edition and
+focuses on async/concurrent operations with proper error handling throughout.
 
 ## Development Commands
 
@@ -21,6 +21,9 @@ through the `nvim-diagnostics://` URI scheme.
 cargo build
 cargo run
 
+# With custom logging options
+cargo run -- --log-file ./nvim-mcp.log --log-level debug
+
 # Production build and run
 cargo build --release
 nix run .
@@ -29,30 +32,34 @@ nix run .
 nix develop .
 ```
 
+**CLI Options:**
+
+- `--log-file <PATH>`: Log file path (defaults to stderr)
+- `--log-level <LEVEL>`: Log level (trace, debug, info, warn, error;
+  defaults to info)
+
 ### Testing
 
 ```bash
-# Run all tests (use single thread to prevent port conflicts)
-cargo test -- --show-output --test-threads 1
+# Run all tests
+cargo test -- --show-output
+
+# Run single specific module test
+cargo test -- --show-output neovim::integration_tests
+
+# Run single specific test
+cargo test -- --show-output neovim::integration_tests::test_tcp_connection_lifecycle
 
 # Skip integration tests (which require Neovim)
-cargo test -- --skip=integration_tests --show-output --test-threads 1
+cargo test -- --skip=integration_tests --show-output 1
 
 # Run tests in Nix environment (requires IN_NIX_SHELL not set)
-nix develop . --command cargo test -- --show-output --test-threads 1
+nix develop . --command cargo test -- --show-output 1
 ```
 
 **Note**: The `nix develop . --command` syntax only works when the
 `IN_NIX_SHELL` environment variable is not set. If you're already in a Nix
 shell, use the commands directly without the `nix develop . --command` prefix.
-
-### Neovim Setup for Testing
-
-Start Neovim with TCP listening for integration tests:
-
-```bash
-nvim --listen 127.0.0.1:6666
-```
 
 ## Architecture Overview
 
@@ -99,11 +106,11 @@ The codebase follows a layered architecture:
 
 ### Available MCP Tools
 
-The server provides these tools:
+The server provides these tools (implemented with `#[tool]` attribute):
 
-1. **`connect_nvim`**: Connect via Unix socket/named pipe
-2. **`connect_nvim_tcp`**: Connect via TCP address
-3. **`disconnect_nvim_tcp`**: Disconnect from current Neovim instance
+1. **`connect`**: Connect via Unix socket/named pipe
+2. **`connect_tcp`**: Connect via TCP address
+3. **`disconnect`**: Disconnect from current Neovim instance
 4. **`list_buffers`**: List all open buffers with details
 5. **`exec_lua`**: Execute arbitrary Lua code in Neovim
 6. **`buffer_diagnostics`**: Get diagnostics for specific buffer
@@ -122,10 +129,12 @@ messages, file paths, and line/column positions.
 
 ## Key Dependencies
 
-- **`rmcp`**: MCP protocol implementation with stdio transport
+- **`rmcp`**: MCP protocol implementation with stdio transport and client features
 - **`nvim-rs`**: Neovim msgpack-rpc client (with tokio feature)
-- **`tokio`**: Async runtime for concurrent operations
-- **`tracing`**: Structured logging throughout the application
+- **`tokio`**: Async runtime for concurrent operations (full feature set)
+- **`tracing`**: Structured logging with subscriber and appender support
+- **`clap`**: CLI argument parsing with derive features
+- **`thiserror`**: Ergonomic error handling and error type derivation
 
 ## Testing Architecture
 
@@ -146,11 +155,14 @@ messages, file paths, and line/column positions.
 To add a new tool to the server:
 
 1. Add a new method to `NeovimMcpServer` in `src/server/neovim.rs`
-2. Use the `#[tool(description = "...")]` attribute
-3. Define request/response parameter structs with `serde` and `schemars`
-   derives
-4. Add appropriate error handling and connection validation
-5. Update integration tests as needed
+2. Use the `#[tool(description = "...")]` attribute with `#[instrument(skip(self))]`
+3. Define request parameter structs with `serde::Deserialize` and
+   `schemars::JsonSchema` derives
+4. Return `Result<CallToolResult, McpError>` and use `NeovimError::from()`
+   for error conversion
+5. Add connection validation: check if client is connected before operations
+6. Update integration tests in `src/server/integration_tests.rs`
+7. Register the tool by adding it to the `tool_router!` macro in server initialization
 
 ## Development Environment
 
@@ -158,12 +170,17 @@ This project uses Nix flakes for reproducible development environments.
 The flake provides:
 
 - Rust toolchain (stable) with clippy, rustfmt, and rust-analyzer
-- Neovim 0.11.3 for integration testing
+- Neovim 0.11.3+ for integration testing
 - Pre-commit hooks for code quality
 
 Use `nix develop .` to enter the development shell (only if `IN_NIX_SHELL` is
 not already set) or set up direnv with `echo 'use flake' > .envrc` for
 automatic environment activation.
+
+### Code Formatting
+
+The project uses `stylua.toml` for Lua code formatting. Rust code follows
+standard rustfmt conventions.
 
 ## Neovim Lua Plugin
 
