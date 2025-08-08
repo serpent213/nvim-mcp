@@ -62,7 +62,11 @@ return {
     "linw1995/nvim-mcp",
     -- install the mcp server binary automatically
     -- build = "cargo install --path .",
-    build = "nix profile install .#nvim-mcp",
+    build = [[
+      nix build .#nvim-mcp
+      nix profile remove nvim-mcp
+      nix profile install .#nvim-mcp
+    ]],
     opts = {},
 }
 ```
@@ -152,6 +156,10 @@ establishment phase:
   - Parameters: `connection_id` (string), `id` (number), `lsp_client_name`
     (string), `line` (number), `character` (number), `end_line` (number),
     `end_character` (number) (all positions are 0-indexed)
+
+- **`buffer_hover`**: Get symbol hover information via LSP
+  - Parameters: `connection_id` (string), `id` (number), `lsp_client_name`
+    (string), `line` (number), `character` (number) (all positions are 0-indexed)
 
 #### Code Execution
 
@@ -274,14 +282,14 @@ echo 'use flake' >.envrc
 ### Testing
 
 ```bash
-# Run all tests (single-threaded to prevent port conflicts)
-cargo test -- --show-output --test-threads 1
+# Run all tests
+cargo test -- --show-output
 
 # Skip integration tests (which require Neovim)
-cargo test -- --skip=integration_tests --show-output --test-threads 1
+cargo test -- --skip=integration_tests --show-output
 
 # In Nix environment
-nix develop . --command cargo test -- --show-output --test-threads 1
+nix develop . --command cargo test -- --show-output
 ```
 
 **Note**: If already in a Nix shell, omit the `nix develop . --command` prefix.

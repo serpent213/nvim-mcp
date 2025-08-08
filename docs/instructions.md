@@ -4,7 +4,7 @@
 
 ### Tools
 
-The server provides 8 MCP tools for interacting with Neovim instances:
+The server provides 9 MCP tools for interacting with Neovim instances:
 
 #### Connection Management
 
@@ -72,6 +72,17 @@ All tools below require a `connection_id` parameter from connection establishmen
     - `end_character` (number): End character (0-indexed)
   - **Returns**: Array of available code action objects
   - **Usage**: Get refactoring options, quick fixes, and code suggestions
+
+- **`buffer_hover`**: Get symbol hover information via LSP
+  - **Parameters**:
+    - `connection_id` (string): Target Neovim instance ID
+    - `id` (number): Buffer ID from list_buffers
+    - `lsp_client_name` (string): LSP client name from lsp_clients
+    - `line` (number): Symbol position line (0-indexed)
+    - `character` (number): Symbol position character (0-indexed)
+  - **Returns**: Object with hover information including documentation and type details
+  - **Usage**: Get detailed information about symbols, functions, variables at
+    cursor position
 
 ### Resources
 
@@ -187,8 +198,10 @@ Connection-scoped diagnostic resources using `nvim-diagnostics://` scheme:
 2. Use exec_lua to get buffer content and metadata (reuse connection_id)
 3. Check LSP clients for language-specific information (reuse connection_id)
 4. Request code actions for interesting ranges (reuse connection_id)
-5. Combine information for comprehensive analysis
-6. Maintain connection for iterative code exploration
+5. Use buffer_hover to get detailed symbol information at cursor positions
+   (reuse connection_id)
+6. Combine information for comprehensive analysis
+7. Maintain connection for iterative code exploration
 
 #### Multi-Instance Management
 
