@@ -60,6 +60,20 @@ pub struct BufferLSPConnectionParams {
     pub end_character: u64,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct HoverParams {
+    /// Unique identifier for the target Neovim instance
+    pub connection_id: String,
+    /// Neovim Buffer ID
+    pub id: u64,
+    /// Lsp client name
+    pub lsp_client_name: String,
+    /// Symbol position in the buffer, line number starts from 0
+    pub line: u64,
+    /// Symbol position in the buffer, character number starts from 0
+    pub character: u64,
+}
+
 #[tool_router]
 impl NeovimMcpServer {
     #[tool(description = "Get available Neovim targets")]
@@ -238,6 +252,24 @@ impl NeovimMcpServer {
             .lsp_get_code_actions(&lsp_client_name, id, range)
             .await?;
         Ok(CallToolResult::success(vec![Content::json(code_actions)?]))
+    }
+
+    #[tool(description = "Get Symbol's hover information")]
+    #[instrument(skip(self))]
+    pub async fn buffer_hover(
+        &self,
+        Parameters(HoverParams {
+            connection_id,
+            id,
+            lsp_client_name,
+            line,
+            character,
+        }): Parameters<HoverParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let client = self.get_connection(&connection_id)?;
+        let position = Position { line, character };
+        let hover = client.lsp_hover(&lsp_client_name, id, position).await?;
+        Ok(CallToolResult::success(vec![Content::json(hover)?]))
     }
 }
 
