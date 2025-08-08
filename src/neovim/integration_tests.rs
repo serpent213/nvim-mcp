@@ -53,17 +53,22 @@ async fn test_buffer_operations() {
     let (client, _guard) = setup_connected_client_ipc(&ipc_path).await;
 
     // Test buffer listing
-    let result = client.list_buffers_info().await;
-    assert!(result.is_ok(), "Failed to list buffers: {result:?}");
+    let result = client.get_buffers().await;
+    assert!(result.is_ok(), "Failed to get buffers: {result:?}");
 
     let buffer_info = result.unwrap();
     assert!(!buffer_info.is_empty());
 
     // Should have at least one buffer (the initial empty buffer)
-    let buffer_info_text = buffer_info.join(", ");
+    let first_buffer = &buffer_info[0];
     assert!(
-        buffer_info_text.contains("Buffer"),
-        "Buffer list should contain buffer info: {buffer_info_text:?}"
+        first_buffer.id > 0,
+        "Buffer should have valid id: {first_buffer:?}"
+    );
+    // Line count should be reasonable (buffers typically have at least 1 line)
+    assert!(
+        first_buffer.line_count > 0,
+        "Buffer should have at least one line: {first_buffer:?}"
     );
 
     // Guard automatically cleans up when it goes out of scope
@@ -116,10 +121,10 @@ async fn test_error_handling() {
     let client = NeovimClient::<NamedPipeClient>::new();
 
     // Test operations without connection
-    let result = client.list_buffers_info().await;
+    let result = client.get_buffers().await;
     assert!(
         result.is_err(),
-        "list_buffers_info should fail when not connected"
+        "get_buffers should fail when not connected"
     );
 
     let result = client.execute_lua("return 1").await;

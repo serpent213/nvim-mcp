@@ -17,8 +17,8 @@ pub trait NeovimClientTrait: Sync {
     /// Disconnect from the current Neovim instance
     async fn disconnect(&mut self) -> Result<String, NeovimError>;
 
-    /// List information about all buffers
-    async fn list_buffers_info(&self) -> Result<Vec<String>, NeovimError>;
+    /// Get information about all buffers
+    async fn get_buffers(&self) -> Result<Vec<BufferInfo>, NeovimError>;
 
     /// Execute Lua code in Neovim
     async fn execute_lua(&self, code: &str) -> Result<Value, NeovimError>;
@@ -124,6 +124,13 @@ pub struct LSPDiagnostic {
 pub struct LspClient {
     pub id: u64,
     pub name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BufferInfo {
+    pub id: u64,
+    pub name: String,
+    pub line_count: u64,
 }
 
 /**
@@ -773,40 +780,28 @@ where
     }
 
     #[instrument(skip(self))]
-    async fn list_buffers_info(&self) -> Result<Vec<String>, NeovimError> {
-        debug!("Listing buffers");
+    async fn get_buffers(&self) -> Result<Vec<BufferInfo>, NeovimError> {
+        debug!("Getting buffer information");
 
-        let conn = self.connection.as_ref().ok_or_else(|| {
-            NeovimError::Connection("Not connected to any Neovim instance".to_string())
-        })?;
+        let lua_code = include_str!("lua/lsp_get_buffers.lua");
 
-        match conn.nvim.list_bufs().await {
+        match self.execute_lua(lua_code).await {
             Ok(buffers) => {
-                let buffer_info: Vec<String> =
-                    futures::future::try_join_all(buffers.iter().map(|buf| async {
-                        let number = buf
-                            .get_number()
-                            .await
-                            .map_err(|e| format!("Number error: {e}"))?;
-                        let name = buf
-                            .get_name()
-                            .await
-                            .unwrap_or_else(|_| "[No Name]".to_string());
-                        let lines = buf
-                            .line_count()
-                            .await
-                            .map_err(|e| format!("Lines error: {e}"))?;
-                        Ok::<String, String>(format!("Buffer {number}: {name} ({lines} lines)"))
-                    }))
-                    .await
-                    .map_err(|e| NeovimError::Api(format!("Failed to get buffer info: {e}")))?;
-
-                debug!("Found {} buffers", buffer_info.len());
-                Ok(buffer_info)
+                debug!("Get buffers retrieved successfully");
+                let buffers: Vec<BufferInfo> = match serde_json::from_str(buffers.as_str().unwrap())
+                {
+                    Ok(d) => d,
+                    Err(e) => {
+                        debug!("Failed to parse buffers: {}", e);
+                        return Err(NeovimError::Api(format!("Failed to parse buffers: {e}")));
+                    }
+                };
+                debug!("Found {} buffers", buffers.len());
+                Ok(buffers)
             }
             Err(e) => {
-                debug!("Failed to list buffers: {}", e);
-                Err(NeovimError::Api(format!("Failed to list buffers: {e}")))
+                debug!("Failed to get buffer info: {}", e);
+                Err(NeovimError::Api(format!("Failed to get buffer info: {e}")))
             }
         }
     }

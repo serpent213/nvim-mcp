@@ -360,9 +360,12 @@ async fn test_list_buffers_tool() -> Result<(), Box<dyn std::error::Error>> {
     // Verify the response contains buffer information
     if let Some(content) = result.content.first() {
         if let Some(text) = content.as_text() {
-            assert!(text.text.contains("Buffer"));
-            // Should have at least the initial empty buffer
-            assert!(text.text.contains("1"));
+            // The response should be JSON with buffer info
+            assert!(text.text.contains("\"id\""));
+            assert!(text.text.contains("\"name\""));
+            assert!(text.text.contains("\"line_count\""));
+            // Should have at least the initial empty buffer with id 1
+            assert!(text.text.contains("\"id\":1"));
         } else {
             panic!("Expected text content in list buffers result");
         }

@@ -166,7 +166,7 @@ impl NeovimMcpServer {
         Parameters(ConnectionRequest { connection_id }): Parameters<ConnectionRequest>,
     ) -> Result<CallToolResult, McpError> {
         let client = self.get_connection(&connection_id)?;
-        let buffers = client.list_buffers_info().await?;
+        let buffers = client.get_buffers().await?;
         Ok(CallToolResult::success(vec![Content::json(buffers)?]))
     }
 
