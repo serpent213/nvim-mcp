@@ -8,6 +8,7 @@ use tracing::instrument;
 
 use super::core::{NeovimMcpServer, find_get_all_targets};
 use crate::neovim::{NeovimClient, NeovimClientTrait, Position, Range};
+use crate::neovim::client::{DocumentSymbolResult, SymbolInformation};
 
 /// Connect to Neovim instance via unix socket or TCP
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -72,6 +73,28 @@ pub struct HoverParams {
     pub line: u64,
     /// Symbol position in the buffer, character number starts from 0
     pub character: u64,
+}
+
+/// Document symbols parameters with connection context
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct DocumentSymbolsParams {
+    /// Unique identifier for the target Neovim instance
+    pub connection_id: String,
+    /// Neovim Buffer ID
+    pub id: u64,
+    /// Lsp client name
+    pub lsp_client_name: String,
+}
+
+/// Workspace symbols parameters with connection context
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct WorkspaceSymbolsParams {
+    /// Unique identifier for the target Neovim instance
+    pub connection_id: String,
+    /// Lsp client name
+    pub lsp_client_name: String,
+    /// A query string to filter symbols by. Clients may send an empty string here to request all symbols.
+    pub query: String,
 }
 
 #[tool_router]
@@ -270,6 +293,36 @@ impl NeovimMcpServer {
         let position = Position { line, character };
         let hover = client.lsp_hover(&lsp_client_name, id, position).await?;
         Ok(CallToolResult::success(vec![Content::json(hover)?]))
+    }
+
+    #[tool(description = "Get document symbols for a buffer")]
+    #[instrument(skip(self))]
+    pub async fn document_symbols(
+        &self,
+        Parameters(DocumentSymbolsParams {
+            connection_id,
+            id,
+            lsp_client_name,
+        }): Parameters<DocumentSymbolsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let client = self.get_connection(&connection_id)?;
+        let symbols = client.lsp_document_symbols(&lsp_client_name, id).await?;
+        Ok(CallToolResult::success(vec![Content::json(symbols)?]))
+    }
+
+    #[tool(description = "Search workspace symbols by query")]
+    #[instrument(skip(self))]
+    pub async fn workspace_symbols(
+        &self,
+        Parameters(WorkspaceSymbolsParams {
+            connection_id,
+            lsp_client_name,
+            query,
+        }): Parameters<WorkspaceSymbolsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let client = self.get_connection(&connection_id)?;
+        let symbols = client.lsp_workspace_symbols(&lsp_client_name, &query).await?;
+        Ok(CallToolResult::success(vec![Content::json(symbols)?]))
     }
 }
 
