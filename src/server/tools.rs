@@ -8,7 +8,6 @@ use tracing::instrument;
 
 use super::core::{NeovimMcpServer, find_get_all_targets};
 use crate::neovim::{NeovimClient, NeovimClientTrait, Position, Range};
-use crate::neovim::client::{DocumentSymbolResult, SymbolInformation};
 
 /// Connect to Neovim instance via unix socket or TCP
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
