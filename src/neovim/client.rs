@@ -56,14 +56,14 @@ pub trait NeovimClientTrait: Sync {
         &self,
         client_name: &str,
         buffer_id: u64,
-    ) -> Result<DocumentSymbolResult, NeovimError>;
+    ) -> Result<Option<DocumentSymbolResult>, NeovimError>;
 
     /// Search for workspace symbols by query
     async fn lsp_workspace_symbols(
         &self,
         client_name: &str,
         query: &str,
-    ) -> Result<Vec<SymbolInformation>, NeovimError>;
+    ) -> Result<WorkspaceSymbolResult, NeovimError>;
 }
 
 pub struct NeovimHandler<T> {
@@ -717,8 +717,9 @@ pub enum DocumentSymbolResult {
 /// Result type for workspace symbols request
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct WorkspaceSymbolResult {
-    pub err_msg: Option<String>,
-    pub result: Option<Vec<SymbolInformation>>,
+    pub result: Option<DocumentSymbolResult>,
+    #[serde(flatten)]
+    pub unknowns: HashMap<String, serde_json::Value>,
 }
 
 pub struct NeovimClient<T>
@@ -1177,7 +1178,7 @@ where
         &self,
         client_name: &str,
         buffer_id: u64,
-    ) -> Result<DocumentSymbolResult, NeovimError> {
+    ) -> Result<Option<DocumentSymbolResult>, NeovimError> {
         let conn = self.connection.as_ref().ok_or_else(|| {
             NeovimError::Connection("Not connected to any Neovim instance".to_string())
         })?;
@@ -1211,7 +1212,7 @@ where
                 debug!("LSP Document symbols retrieved successfully");
                 #[derive(Debug, serde::Deserialize)]
                 struct Result {
-                    result: DocumentSymbolResult,
+                    result: Option<DocumentSymbolResult>,
                 }
                 let result: Result = match serde_json::from_str(result.as_str().unwrap()) {
                     Ok(d) => d,
@@ -1238,7 +1239,7 @@ where
         &self,
         client_name: &str,
         query: &str,
-    ) -> Result<Vec<SymbolInformation>, NeovimError> {
+    ) -> Result<WorkspaceSymbolResult, NeovimError> {
         let conn = self.connection.as_ref().ok_or_else(|| {
             NeovimError::Connection("Not connected to any Neovim instance".to_string())
         })?;
@@ -1272,13 +1273,7 @@ where
                             )));
                         }
                     };
-                match result.result {
-                    Some(symbols) => Ok(symbols),
-                    None => match result.err_msg {
-                        Some(err) => Err(NeovimError::Api(err)),
-                        None => Ok(vec![]),
-                    },
-                }
+                Ok(result)
             }
             Err(e) => {
                 debug!("Failed to get workspace symbols: {}", e);
