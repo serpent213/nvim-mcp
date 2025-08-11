@@ -121,7 +121,7 @@ Once both the MCP server and Neovim are running, here's a typical workflow:
 
 ## Available Tools
 
-The server provides these MCP tools for interacting with Neovim:
+The server provides 11 MCP tools for interacting with Neovim:
 
 ### Connection Management
 
@@ -166,6 +166,14 @@ establishment phase:
 - **`buffer_hover`**: Get symbol hover information via LSP
   - Parameters: `connection_id` (string), `id` (number), `lsp_client_name`
     (string), `line` (number), `character` (number) (all positions are 0-indexed)
+
+- **`document_symbols`**: Get document symbols for a buffer
+  - Parameters: `connection_id` (string), `id` (number), `lsp_client_name`
+    (string) - Buffer ID and LSP client name
+
+- **`workspace_symbols`**: Search workspace symbols by query
+  - Parameters: `connection_id` (string), `lsp_client_name` (string), `query`
+    (string) - Search query for filtering symbols
 
 #### Code Execution
 

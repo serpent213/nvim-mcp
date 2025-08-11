@@ -4,7 +4,7 @@
 
 ### Tools
 
-The server provides 9 MCP tools for interacting with Neovim instances:
+The server provides 11 MCP tools for interacting with Neovim instances:
 
 #### Connection Management
 
@@ -83,6 +83,22 @@ All tools below require a `connection_id` parameter from connection establishmen
   - **Returns**: Object with hover information including documentation and type details
   - **Usage**: Get detailed information about symbols, functions, variables at
     cursor position
+
+- **`document_symbols`**: Get document symbols for specific buffer
+  - **Parameters**:
+    - `connection_id` (string): Target Neovim instance ID
+    - `id` (number): Buffer ID from list_buffers
+    - `lsp_client_name` (string): LSP client name from lsp_clients
+  - **Returns**: Array of document symbol objects with names, kinds, and ranges
+  - **Usage**: Navigate and understand code structure within a specific file
+
+- **`workspace_symbols`**: Search workspace symbols by query
+  - **Parameters**:
+    - `connection_id` (string): Target Neovim instance ID
+    - `lsp_client_name` (string): LSP client name from lsp_clients
+    - `query` (string): Search query to filter symbols (empty string returns all)
+  - **Returns**: Array of workspace symbol objects with names, locations, and kinds
+  - **Usage**: Find symbols across the entire workspace for navigation and code exploration
 
 ### Resources
 
@@ -200,8 +216,19 @@ Connection-scoped diagnostic resources using `nvim-diagnostics://` scheme:
 4. Request code actions for interesting ranges (reuse connection_id)
 5. Use buffer_hover to get detailed symbol information at cursor positions
    (reuse connection_id)
-6. Combine information for comprehensive analysis
-7. Maintain connection for iterative code exploration
+6. Use document_symbols to understand file structure (reuse connection_id)
+7. Use workspace_symbols to find related code across project (reuse connection_id)
+8. Combine information for comprehensive analysis
+9. Maintain connection for iterative code exploration
+
+#### Symbol Navigation Workflow
+
+1. Connect to Neovim instance (cache connection_id)
+2. Get available LSP clients (reuse connection_id)
+3. Use workspace_symbols with search query to find symbols across project
+4. Use document_symbols to understand structure of specific files
+5. Navigate to symbol locations using returned position information
+6. Keep connection active for continued navigation
 
 #### Multi-Instance Management
 

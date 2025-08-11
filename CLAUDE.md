@@ -7,7 +7,7 @@ with code in this repository.
 
 This is a Rust-based Model Context Protocol (MCP) server that provides AI
 assistants with programmatic access to Neovim instances. The server supports
-both Unix socket/named pipe and TCP connections, implements nine core MCP
+both Unix socket/named pipe and TCP connections, implements eleven core MCP
 tools for Neovim interaction, and provides diagnostic resources through the
 `nvim-diagnostics://` URI scheme. The project uses Rust 2024 edition and
 focuses on async/concurrent operations with proper error handling throughout.
@@ -78,7 +78,7 @@ The codebase follows a modular architecture with clear separation of concerns:
   - Error conversion between `NeovimError` and `McpError`
 
 - **`src/server/tools.rs`**: MCP tool implementations
-  - Implements eight MCP tools using the `#[tool]` attribute
+  - Implements eleven MCP tools using the `#[tool]` attribute
   - Contains parameter structs for tool requests
   - Focuses purely on MCP tool logic and protocol implementation
   - Clean separation from core infrastructure
@@ -170,13 +170,18 @@ The server provides these tools (implemented with `#[tool]` attribute):
 3. **`disconnect`**: Disconnect from specific Neovim instance by `connection_id`
 
 **Connection-Aware Tools** (require `connection_id` parameter):
-4. **`list_buffers`**: List all open buffers for specific connection
-5. **`exec_lua`**: Execute arbitrary Lua code in specific Neovim instance
-6. **`buffer_diagnostics`**: Get diagnostics for specific buffer on specific connection
-7. **`lsp_clients`**: Get workspace LSP clients for specific connection
-8. **`buffer_code_actions`**: Get LSP code actions for buffer range on specific connection
-9. **`buffer_hover`**: Get LSP hover information for symbols at cursor
+
+1. **`list_buffers`**: List all open buffers for specific connection
+2. **`exec_lua`**: Execute arbitrary Lua code in specific Neovim instance
+3. **`buffer_diagnostics`**: Get diagnostics for specific buffer on specific connection
+4. **`lsp_clients`**: Get workspace LSP clients for specific connection
+5. **`buffer_code_actions`**: Get LSP code actions for buffer range on specific connection
+6. **`buffer_hover`**: Get LSP hover information for symbols at cursor
    position on specific connection
+7. **`document_symbols`**: Get document symbols for specific buffer on
+   specific connection
+8. **`workspace_symbols`**: Search workspace symbols by query on specific
+   connection
 
 ### MCP Resources
 
