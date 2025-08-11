@@ -2,3 +2,4 @@
 .claude
 *.log
 .lazy.lua
+.direnv
