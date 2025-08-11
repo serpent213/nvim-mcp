@@ -120,6 +120,11 @@ impl NeovimMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let connection_id = self.generate_shorter_connection_id(&path);
 
+        // If connection already exists, disconnect the old one first (ignoring errors)
+        if let Some(mut old_client) = self.nvim_clients.get_mut(&connection_id) {
+            let _ = old_client.disconnect().await;
+        }
+
         let mut client = NeovimClient::new();
         client.connect_path(&path).await?;
         client.setup_diagnostics_changed_autocmd().await?;
@@ -143,6 +148,11 @@ impl NeovimMcpServer {
         Parameters(ConnectNvimRequest { target: address }): Parameters<ConnectNvimRequest>,
     ) -> Result<CallToolResult, McpError> {
         let connection_id = self.generate_shorter_connection_id(&address);
+
+        // If connection already exists, disconnect the old one first (ignoring errors)
+        if let Some(mut old_client) = self.nvim_clients.get_mut(&connection_id) {
+            let _ = old_client.disconnect().await;
+        }
 
         let mut client = NeovimClient::new();
         client.connect_tcp(&address).await?;
