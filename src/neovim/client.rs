@@ -1,11 +1,14 @@
 #![allow(rustdoc::invalid_codeblock_attributes)]
 
 use std::collections::HashMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use nvim_rs::{Handler, Neovim, create::tokio as create};
 use rmpv::Value;
+use serde::de::{self, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer};
 use tokio::{io::AsyncWrite, net::TcpStream};
 use tracing::{debug, info, instrument};
 
@@ -186,7 +189,7 @@ pub struct TextDocumentIdentifier {
 }
 
 /// Universal identifier for text documents supporting multiple reference types
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentIdentifier {
     /// Reference by Neovim buffer ID (for currently open files)
@@ -195,6 +198,66 @@ pub enum DocumentIdentifier {
     ProjectRelativePath(PathBuf),
     /// Reference by absolute file path
     AbsolutePath(PathBuf),
+}
+
+/// Supports both string and struct deserialization for DocumentIdentifier.
+/// Compatible with Claude Code when using subscription.
+struct DocumentIdentifierVisitor;
+
+impl<'de> Visitor<'de> for DocumentIdentifierVisitor {
+    type Value = DocumentIdentifier;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("string or object")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        serde_json::from_str(value)
+            .map_err(|e| de::Error::custom(format!("Failed to parse JSON string: {}", e)))
+    }
+
+    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+    where
+        M: MapAccess<'de>,
+    {
+        while let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
+                "buffer_id" => {
+                    let value: u64 = map.next_value()?;
+                    return Ok(DocumentIdentifier::BufferId(value));
+                }
+                "project_relative_path" => {
+                    let value: String = map.next_value()?;
+                    return Ok(DocumentIdentifier::ProjectRelativePath(PathBuf::from(
+                        value,
+                    )));
+                }
+                "absolute_path" => {
+                    let value: String = map.next_value()?;
+                    return Ok(DocumentIdentifier::AbsolutePath(PathBuf::from(value)));
+                }
+                _ => {
+                    // Skip unknown keys to be forward compatible
+                    let _: serde::de::IgnoredAny = map.next_value()?;
+                }
+            }
+        }
+        Err(de::Error::custom(
+            "Expected one of: buffer_id, project_relative_path, or absolute_path",
+        ))
+    }
+}
+
+impl<'de> Deserialize<'de> for DocumentIdentifier {
+    fn deserialize<D>(deserializer: D) -> Result<DocumentIdentifier, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(DocumentIdentifierVisitor)
+    }
 }
 
 impl DocumentIdentifier {
@@ -1715,5 +1778,181 @@ mod tests {
         assert!(schema_json.contains("buffer_id"));
         assert!(schema_json.contains("project_relative_path"));
         assert!(schema_json.contains("absolute_path"));
+    }
+
+    #[test]
+    fn test_document_identifier_string_deserializer_buffer_id() {
+        // Test deserializing buffer_id from JSON string
+        let json_str = r#"{"buffer_id": 42}"#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(json_str);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), DocumentIdentifier::BufferId(42));
+
+        // Test large buffer ID
+        let json_str = r#"{"buffer_id": 18446744073709551615}"#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(json_str);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            DocumentIdentifier::BufferId(18446744073709551615)
+        );
+    }
+
+    #[test]
+    fn test_document_identifier_string_deserializer_project_path() {
+        // Test deserializing project_relative_path from JSON string
+        let json_str = r#"{"project_relative_path": "src/main.rs"}"#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(json_str);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            DocumentIdentifier::ProjectRelativePath(PathBuf::from("src/main.rs"))
+        );
+
+        // Test with nested path
+        let json_str = r#"{"project_relative_path": "src/server/tools.rs"}"#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(json_str);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            DocumentIdentifier::ProjectRelativePath(PathBuf::from("src/server/tools.rs"))
+        );
+
+        // Test with empty path
+        let json_str = r#"{"project_relative_path": ""}"#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(json_str);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            DocumentIdentifier::ProjectRelativePath(PathBuf::from(""))
+        );
+    }
+
+    #[test]
+    fn test_document_identifier_string_deserializer_absolute_path() {
+        // Test deserializing absolute_path from JSON string
+        let json_str = r#"{"absolute_path": "/usr/local/src/main.rs"}"#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(json_str);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            DocumentIdentifier::AbsolutePath(PathBuf::from("/usr/local/src/main.rs"))
+        );
+
+        // Test Windows-style absolute path
+        let json_str = r#"{"absolute_path": "C:\\Users\\test\\Documents\\file.rs"}"#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(json_str);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            DocumentIdentifier::AbsolutePath(PathBuf::from("C:\\Users\\test\\Documents\\file.rs"))
+        );
+    }
+
+    #[test]
+    fn test_document_identifier_string_deserializer_via_visitor() {
+        // Test the custom deserializer's visit_str method by passing JSON as a string value
+        // This simulates Claude Code's usage pattern where JSON is embedded as string
+        let json_as_string = r#""{\"buffer_id\": 123}""#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(json_as_string);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), DocumentIdentifier::BufferId(123));
+
+        let json_as_string = r#""{\"project_relative_path\": \"src/lib.rs\"}""#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(json_as_string);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            DocumentIdentifier::ProjectRelativePath(PathBuf::from("src/lib.rs"))
+        );
+
+        let json_as_string = r#""{\"absolute_path\": \"/home/user/file.rs\"}""#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(json_as_string);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            DocumentIdentifier::AbsolutePath(PathBuf::from("/home/user/file.rs"))
+        );
+    }
+
+    #[test]
+    fn test_document_identifier_string_deserializer_error_cases() {
+        // Test invalid JSON string format
+        let invalid_json = r#"{"invalid_field": 42}"#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(invalid_json);
+        assert!(result.is_err());
+
+        // Test empty JSON object
+        let empty_json = r#"{}"#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(empty_json);
+        assert!(result.is_err());
+
+        // Test malformed JSON
+        let malformed_json = r#"{"buffer_id": invalid}"#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(malformed_json);
+        assert!(result.is_err());
+
+        // Test negative buffer_id (should fail for u64)
+        let negative_json = r#"{"buffer_id": -1}"#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(negative_json);
+        assert!(result.is_err());
+
+        // Test string with malformed embedded JSON
+        let malformed_embedded = r#""{\"buffer_id\": }"#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(malformed_embedded);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_document_identifier_string_deserializer_mixed_cases() {
+        // Test with extra whitespace in JSON
+        let json_str = r#"{ "buffer_id" : 999 }"#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(json_str);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), DocumentIdentifier::BufferId(999));
+
+        // Test with Unicode in paths
+        let json_str = r#"{"project_relative_path": "src/测试.rs"}"#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(json_str);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            DocumentIdentifier::ProjectRelativePath(PathBuf::from("src/测试.rs"))
+        );
+
+        // Test with special characters in paths
+        let json_str = r#"{"absolute_path": "/tmp/test with spaces & symbols!.rs"}"#;
+        let result: Result<DocumentIdentifier, _> = serde_json::from_str(json_str);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            DocumentIdentifier::AbsolutePath(PathBuf::from("/tmp/test with spaces & symbols!.rs"))
+        );
+    }
+
+    #[test]
+    fn test_document_identifier_round_trip_serialization() {
+        // Test round-trip serialization/deserialization for all variants
+        let test_cases = vec![
+            DocumentIdentifier::BufferId(42),
+            DocumentIdentifier::ProjectRelativePath(PathBuf::from("src/main.rs")),
+            DocumentIdentifier::AbsolutePath(PathBuf::from("/usr/src/main.rs")),
+        ];
+
+        for original in test_cases {
+            // Serialize to JSON
+            let json = serde_json::to_string(&original).unwrap();
+
+            // Deserialize back from JSON
+            let deserialized: DocumentIdentifier = serde_json::from_str(&json).unwrap();
+
+            // Verify round-trip equality
+            assert_eq!(original, deserialized);
+
+            // Test string-embedded JSON deserialization (Claude Code use case)
+            let json_string = serde_json::to_string(&json).unwrap();
+            let from_string: DocumentIdentifier = serde_json::from_str(&json_string).unwrap();
+            assert_eq!(original, from_string);
+        }
     }
 }
