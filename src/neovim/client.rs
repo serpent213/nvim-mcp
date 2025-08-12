@@ -215,7 +215,8 @@ impl<'de> Visitor<'de> for DocumentIdentifierVisitor {
     where
         E: de::Error,
     {
-        serde_json::from_str(value).map_err(de::Error::custom)
+        serde_json::from_str(value)
+            .map_err(|e| de::Error::custom(format!("Failed to parse JSON string: {}", e)))
     }
 
     fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
@@ -240,7 +241,7 @@ impl<'de> Visitor<'de> for DocumentIdentifierVisitor {
                 }
                 _ => {
                     // Skip unknown keys to be forward compatible
-                    let _: serde_json::Value = map.next_value()?;
+                    let _: serde::de::IgnoredAny = map.next_value()?;
                 }
             }
         }
