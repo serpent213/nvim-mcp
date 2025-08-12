@@ -14,7 +14,7 @@ use crate::test_utils::*;
 fn extract_connection_id(
     result: &rmcp::model::CallToolResult,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    if let Some(content) = result.content.first() {
+    if let Some(content) = result.content.as_ref().and_then(|c| c.first()) {
         // The content should be JSON
         let json_str = match &content.raw {
             rmcp::model::RawContent::Text(text_content) => &text_content.text,
@@ -148,10 +148,10 @@ async fn test_connect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error>> 
         .await?;
 
     info!("Connect result: {:#?}", result);
-    assert!(!result.content.is_empty());
+    assert!(!result.content.as_ref().is_none_or(|c| c.is_empty()));
 
     // Verify the response contains success message
-    if let Some(content) = result.content.first() {
+    if let Some(content) = result.content.as_ref().and_then(|c| c.first()) {
         if let Some(text) = content.as_text() {
             assert!(text.text.contains("Connected to Neovim"));
             assert!(text.text.contains(&ipc_path));
@@ -254,10 +254,10 @@ async fn test_disconnect_nvim_tcp_tool() -> Result<(), Box<dyn std::error::Error
         .await?;
 
     info!("Disconnect result: {:#?}", result);
-    assert!(!result.content.is_empty());
+    assert!(!result.content.as_ref().is_none_or(|c| c.is_empty()));
 
     // Verify the response contains success message
-    if let Some(content) = result.content.first() {
+    if let Some(content) = result.content.as_ref().and_then(|c| c.first()) {
         if let Some(text) = content.as_text() {
             assert!(text.text.contains("Disconnected from Neovim"));
             assert!(text.text.contains(&ipc_path));
@@ -356,10 +356,10 @@ async fn test_list_buffers_tool() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     info!("List buffers result: {:#?}", result);
-    assert!(!result.content.is_empty());
+    assert!(!result.content.as_ref().is_none_or(|c| c.is_empty()));
 
     // Verify the response contains buffer information
-    if let Some(content) = result.content.first() {
+    if let Some(content) = result.content.as_ref().and_then(|c| c.first()) {
         if let Some(text) = content.as_text() {
             // The response should be JSON with buffer info
             assert!(text.text.contains("\"id\""));
@@ -414,7 +414,7 @@ async fn test_complete_workflow() -> Result<(), Box<dyn std::error::Error>> {
         })
         .await?;
 
-    assert!(!connect_result.content.is_empty());
+    assert!(!connect_result.content.as_ref().is_none_or(|c| c.is_empty()));
     let connection_id = extract_connection_id(&connect_result)?;
     info!(
         "✓ Connected successfully with connection_id: {}",
@@ -436,7 +436,7 @@ async fn test_complete_workflow() -> Result<(), Box<dyn std::error::Error>> {
         })
         .await?;
 
-    assert!(!result.content.is_empty());
+    assert!(!result.content.as_ref().is_none_or(|c| c.is_empty()));
     info!("✓ Listed buffers successfully");
 
     // Step 3: Get LSP clients
@@ -454,7 +454,7 @@ async fn test_complete_workflow() -> Result<(), Box<dyn std::error::Error>> {
         })
         .await?;
 
-    assert!(!result.content.is_empty());
+    assert!(!result.content.as_ref().is_none_or(|c| c.is_empty()));
     info!("✓ Got LSP clients successfully");
 
     // Step 4: Disconnect
@@ -472,7 +472,7 @@ async fn test_complete_workflow() -> Result<(), Box<dyn std::error::Error>> {
         })
         .await?;
 
-    assert!(!result.content.is_empty());
+    assert!(!result.content.as_ref().is_none_or(|c| c.is_empty()));
     info!("✓ Disconnected successfully");
 
     // Step 5: Verify we can't list buffers after disconnect
@@ -632,10 +632,10 @@ async fn test_exec_lua_tool() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     info!("Exec Lua result: {:#?}", result);
-    assert!(!result.content.is_empty());
+    assert!(!result.content.as_ref().is_none_or(|c| c.is_empty()));
 
     // Verify the response contains Lua result
-    if let Some(content) = result.content.first() {
+    if let Some(content) = result.content.as_ref().and_then(|c| c.first()) {
         if let Some(text) = content.as_text() {
             assert!(text.text.contains("42"));
         } else {
@@ -663,7 +663,7 @@ async fn test_exec_lua_tool() -> Result<(), Box<dyn std::error::Error>> {
         })
         .await?;
 
-    assert!(!result.content.is_empty());
+    assert!(!result.content.as_ref().is_none_or(|c| c.is_empty()));
 
     // Test error handling for invalid Lua
     let mut invalid_lua_args = Map::new();
@@ -787,10 +787,10 @@ async fn test_lsp_clients_tool() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     info!("LSP clients result: {:#?}", result);
-    assert!(!result.content.is_empty());
+    assert!(!result.content.as_ref().is_none_or(|c| c.is_empty()));
 
     // Verify the response contains content
-    if let Some(_content) = result.content.first() {
+    if let Some(_content) = result.content.as_ref().and_then(|c| c.first()) {
         // Content received successfully - the JSON parsing is handled by the MCP framework
         info!("LSP clients content received successfully");
     } else {
