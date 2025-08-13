@@ -121,7 +121,7 @@ Once both the MCP server and Neovim are running, here's a typical workflow:
 
 ## Available Tools
 
-The server provides 11 MCP tools for interacting with Neovim:
+The server provides 13 MCP tools for interacting with Neovim:
 
 ### Connection Management
 
@@ -181,6 +181,14 @@ establishment phase:
     `lsp_client_name` (string), `line` (number), `character` (number),
     `include_declaration` (boolean)
 
+- **`lsp_resolve_code_action`**: Resolve code actions with incomplete data
+  - Parameters: `connection_id` (string), `lsp_client_name` (string),
+    `code_action` (CodeAction object) - Code action to resolve
+
+- **`lsp_apply_edit`**: Apply workspace edits using Neovim's LSP utility functions
+  - Parameters: `connection_id` (string), `lsp_client_name` (string),
+    `workspace_edit` (WorkspaceEdit object) - Workspace edit to apply
+
 ### Universal Document Identifier
 
 The `document` parameter in the universal LSP tools accepts a `DocumentIdentifier`
@@ -202,6 +210,30 @@ providing enhanced flexibility for code analysis and navigation.
 
 - **`exec_lua`**: Execute Lua code in Neovim
   - Parameters: `connection_id` (string), `code` (string) - Lua code to execute
+
+### Complete LSP Code Action Workflow
+
+The server now supports the full LSP code action lifecycle:
+
+1. **Get Available Actions**: Use `lsp_code_actions` to retrieve available
+   code actions for a specific range
+2. **Resolve Action**: Use `lsp_resolve_code_action` to resolve any code
+   action that may have incomplete data
+3. **Apply Changes**: Use `lsp_apply_edit` to apply the workspace edit from
+   the resolved code action
+
+**Example Workflow**:
+
+```text
+1. lsp_code_actions → Get available actions
+2. lsp_resolve_code_action → Resolve incomplete action data
+3. lsp_apply_edit → Apply the workspace edit to files
+```
+
+This enables AI assistants to perform complete code refactoring, quick fixes,
+and other LSP-powered transformations. The implementation uses Neovim's native
+`vim.lsp.util.apply_workspace_edit()` function with proper position encoding
+handling, ensuring reliable and accurate file modifications.
 
 ## MCP Resources
 
