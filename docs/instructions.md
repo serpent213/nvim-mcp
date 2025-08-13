@@ -4,7 +4,7 @@
 
 ### Tools
 
-The server provides 11 MCP tools for interacting with Neovim instances:
+The server provides 13 MCP tools for interacting with Neovim instances:
 
 #### Connection Management
 
@@ -117,6 +117,23 @@ All tools below require a `connection_id` parameter from connection establishmen
   - **Returns**: Array of reference objects with locations
   - **Usage**: Find all references to a symbol across the workspace in any document
 
+- **`lsp_resolve_code_action`**: Resolve code actions with incomplete data
+  - **Parameters**:
+    - `connection_id` (string): Target Neovim instance ID
+    - `lsp_client_name` (string): LSP client name from lsp_clients
+    - `code_action` (CodeAction): Code action object to resolve
+  - **Returns**: Resolved CodeAction object with complete data
+  - **Usage**: Resolve code actions that may have incomplete edit or command data
+
+- **`lsp_apply_edit`**: Apply workspace edits using Neovim's LSP utility functions
+  - **Parameters**:
+    - `connection_id` (string): Target Neovim instance ID
+    - `lsp_client_name` (string): LSP client name from lsp_clients
+    - `workspace_edit` (WorkspaceEdit): Workspace edit object to apply
+  - **Returns**: Success confirmation
+  - **Usage**: Apply code changes from resolved code actions to files using
+    `vim.lsp.util.apply_workspace_edit()` with proper position encoding handling
+
 ### Resources
 
 ### Universal Document Identifier System
@@ -206,13 +223,22 @@ Connection-scoped diagnostic resources using `nvim-diagnostics://` scheme:
 3. Read nvim-diagnostics://{connection_id}/workspace resource
 4. Keep connection active for future operations
 
-#### Code Action Workflow
+#### Complete LSP Code Action Workflow
 
 1. get_targets → connect → list_buffers (cache connection_id)
 2. lsp_clients (to find available language servers, reuse connection_id)
 3. lsp_code_actions (with DocumentIdentifier and LSP client, reuse connection_id)
-4. exec_lua (to apply selected actions if needed, reuse connection_id)
-5. Keep connection active for additional operations
+4. lsp_resolve_code_action (resolve any code action with incomplete data, reuse connection_id)
+5. lsp_apply_edit (apply the workspace edit from resolved code action, reuse connection_id)
+6. Keep connection active for additional operations
+
+**Enhanced Workflow Benefits:**
+
+- **Complete automation**: No manual exec_lua required for applying changes
+- **Robust resolution**: Handles code actions with incomplete edit or command data
+- **Native integration**: Uses Neovim's built-in `vim.lsp.util.apply_workspace_edit()`
+  for reliable file modifications with proper position encoding handling
+- **Error handling**: Proper validation and error reporting throughout the process
 
 ### Error Handling Guidelines
 

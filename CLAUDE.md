@@ -161,13 +161,15 @@ This modular architecture provides several advantages:
 
 ### Available MCP Tools
 
-The server provides these tools (implemented with `#[tool]` attribute):
+The server provides these 13 tools (implemented with `#[tool]` attribute):
 
 **Connection Management:**
 
-1. **`connect`**: Connect via Unix socket/named pipe, returns deterministic `connection_id`
-2. **`connect_tcp`**: Connect via TCP address, returns deterministic `connection_id`
-3. **`disconnect`**: Disconnect from specific Neovim instance by `connection_id`
+1. **`get_targets`**: Discover available Neovim socket paths created by the
+   nvim-mcp plugin
+2. **`connect`**: Connect via Unix socket/named pipe, returns deterministic `connection_id`
+3. **`connect_tcp`**: Connect via TCP address, returns deterministic `connection_id`
+4. **`disconnect`**: Disconnect from specific Neovim instance by `connection_id`
 
 **Connection-Aware Tools** (require `connection_id` parameter):
 
@@ -185,6 +187,10 @@ The server provides these tools (implemented with `#[tool]` attribute):
     identification (supports buffer IDs, project-relative paths, and absolute paths)
 9. **`lsp_references`**: Get LSP references with universal document
     identification (supports buffer IDs, project-relative paths, and absolute paths)
+10. **`lsp_resolve_code_action`**: Resolve code actions that may have
+    incomplete data
+11. **`lsp_apply_edit`**: Apply workspace edits using Neovim's LSP utility
+    functions
 
 ### Universal Document Identifier System
 
@@ -240,6 +246,14 @@ BLAKE3 hashes of the target string for consistent identification.
 - **`regex`**: Pattern matching for connection-scoped resource URI parsing
 - **`blake3`**: Fast, deterministic hashing for connection ID generation
 
+**Testing and Development Dependencies:**
+
+- **`tempfile`**: Temporary file and directory management for integration tests
+- **`serde_json`**: JSON serialization/deserialization with enhanced Claude
+  Code compatibility
+- **Enhanced deserialization**: Support for both string and struct formats
+  in CodeAction and WorkspaceEdit types
+
 ## Testing Architecture
 
 - **Integration tests**: Located in `src/server/integration_tests.rs` and
@@ -247,6 +261,11 @@ BLAKE3 hashes of the target string for consistent identification.
 - **Global mutex**: Prevents port conflicts during concurrent test execution
 - **Automated setup**: Tests spawn and manage Neovim instances automatically
 - **Full MCP flow**: Tests cover complete client-server communication
+- **LSP testing**: Comprehensive Go integration tests with gopls language server
+- **Code action testing**: End-to-end tests for lsp_resolve_code_action and
+  lsp_apply_edit
+- **Test data**: Includes Go source files and LSP configuration for realistic
+  testing scenarios
 
 ## Error Handling
 
@@ -277,6 +296,34 @@ To add a new connection-aware tool to the server:
 
 6. **Registration**: The tool is automatically registered by the
    `#[tool_router]` macro
+
+**New Tool Parameter Structures:**
+
+For the recently added LSP tools, the following parameter structures are used:
+
+```rust
+/// Resolve code action parameters
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ResolveCodeActionParams {
+    /// Unique identifier for the target Neovim instance
+    pub connection_id: String,
+    /// LSP client name
+    pub lsp_client_name: String,
+    /// Code action to resolve
+    pub code_action: CodeAction,
+}
+
+/// Apply workspace edit parameters
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ApplyWorkspaceEditParams {
+    /// Unique identifier for the target Neovim instance
+    pub connection_id: String,
+    /// LSP client name (used for position encoding detection)
+    pub lsp_client_name: String,
+    /// Workspace edit to apply using vim.lsp.util.apply_workspace_edit()
+    pub workspace_edit: WorkspaceEdit,
+}
+```
 
 **Example connection-aware tool pattern:**
 
