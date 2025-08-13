@@ -7,7 +7,10 @@ use rmcp::{
 use tracing::instrument;
 
 use super::core::{NeovimMcpServer, find_get_all_targets};
-use crate::neovim::{DocumentIdentifier, NeovimClient, NeovimClientTrait, Position, Range};
+use crate::neovim::{
+    CodeAction, DocumentIdentifier, NeovimClient, NeovimClientTrait, Position, Range,
+    WorkspaceEdit, string_or_struct,
+};
 
 /// Connect to Neovim instance via unix socket or TCP
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -58,6 +61,9 @@ pub struct CodeActionsParams {
     /// Unique identifier for the target Neovim instance
     pub connection_id: String,
     /// Universal document identifier
+    // Supports both string and struct deserialization.
+    // Compatible with Claude Code when using subscription.
+    #[serde(deserialize_with = "string_or_struct")]
     pub document: DocumentIdentifier,
     /// Lsp client name
     pub lsp_client_name: String,
@@ -77,6 +83,9 @@ pub struct HoverParam {
     /// Unique identifier for the target Neovim instance
     pub connection_id: String,
     /// Universal document identifier
+    // Supports both string and struct deserialization.
+    // Compatible with Claude Code when using subscription.
+    #[serde(deserialize_with = "string_or_struct")]
     pub document: DocumentIdentifier,
     /// Lsp client name
     pub lsp_client_name: String,
@@ -92,6 +101,9 @@ pub struct DocumentSymbolsParams {
     /// Unique identifier for the target Neovim instance
     pub connection_id: String,
     /// Universal document identifier
+    // Supports both string and struct deserialization.
+    // Compatible with Claude Code when using subscription.
+    #[serde(deserialize_with = "string_or_struct")]
     pub document: DocumentIdentifier,
     /// Lsp client name
     pub lsp_client_name: String,
@@ -103,6 +115,9 @@ pub struct ReferencesParams {
     /// Unique identifier for the target Neovim instance
     pub connection_id: String,
     /// Universal document identifier
+    // Supports both string and struct deserialization.
+    // Compatible with Claude Code when using subscription.
+    #[serde(deserialize_with = "string_or_struct")]
     pub document: DocumentIdentifier,
     /// Lsp client name
     pub lsp_client_name: String,
@@ -112,6 +127,34 @@ pub struct ReferencesParams {
     pub character: u64,
     /// Include the declaration of the current symbol in the results
     pub include_declaration: bool,
+}
+
+/// Code action resolve parameters
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ResolveCodeActionParams {
+    /// Unique identifier for the target Neovim instance
+    pub connection_id: String,
+    /// Lsp client name
+    pub lsp_client_name: String,
+    /// Code action to resolve
+    // Supports both string and struct deserialization.
+    // Compatible with Claude Code when using subscription.
+    #[serde(deserialize_with = "string_or_struct")]
+    pub code_action: CodeAction,
+}
+
+/// Apply workspace edit parameters
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ApplyWorkspaceEditParams {
+    /// Unique identifier for the target Neovim instance
+    pub connection_id: String,
+    /// Lsp client name
+    pub lsp_client_name: String,
+    /// Workspace edit to apply
+    // Supports both string and struct deserialization.
+    // Compatible with Claude Code when using subscription.
+    #[serde(deserialize_with = "string_or_struct")]
+    pub workspace_edit: WorkspaceEdit,
 }
 
 #[tool_router]
@@ -378,6 +421,42 @@ impl NeovimMcpServer {
             .lsp_references(&lsp_client_name, document, position, include_declaration)
             .await?;
         Ok(CallToolResult::success(vec![Content::json(references)?]))
+    }
+
+    #[tool(description = "Resolve a code action that may have incomplete data")]
+    #[instrument(skip(self))]
+    pub async fn lsp_resolve_code_action(
+        &self,
+        Parameters(ResolveCodeActionParams {
+            connection_id,
+            lsp_client_name,
+            code_action,
+        }): Parameters<ResolveCodeActionParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let client = self.get_connection(&connection_id)?;
+        let resolved_action = client
+            .lsp_resolve_code_action(&lsp_client_name, code_action)
+            .await?;
+        Ok(CallToolResult::success(vec![Content::json(
+            resolved_action,
+        )?]))
+    }
+
+    #[tool(description = "Apply a workspace edit using the LSP workspace/applyEdit method")]
+    #[instrument(skip(self))]
+    pub async fn lsp_apply_edit(
+        &self,
+        Parameters(ApplyWorkspaceEditParams {
+            connection_id,
+            lsp_client_name,
+            workspace_edit,
+        }): Parameters<ApplyWorkspaceEditParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let client = self.get_connection(&connection_id)?;
+        client
+            .lsp_apply_workspace_edit(&lsp_client_name, workspace_edit)
+            .await?;
+        Ok(CallToolResult::success(vec![Content::text("success")]))
     }
 }
 

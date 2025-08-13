@@ -1,8 +1,10 @@
 #![allow(rustdoc::invalid_codeblock_attributes)]
 
 use std::collections::HashMap;
-use std::fmt;
+use std::fmt::{self, Display};
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use async_trait::async_trait;
 use nvim_rs::{Handler, Neovim, create::tokio as create};
@@ -79,6 +81,20 @@ pub trait NeovimClientTrait: Sync {
         position: Position,
         include_declaration: bool,
     ) -> Result<Vec<Location>, NeovimError>;
+
+    /// Resolve a code action that may have incomplete data
+    async fn lsp_resolve_code_action(
+        &self,
+        client_name: &str,
+        code_action: CodeAction,
+    ) -> Result<CodeAction, NeovimError>;
+
+    /// Apply a workspace edit using the LSP workspace/applyEdit method
+    async fn lsp_apply_workspace_edit(
+        &self,
+        client_name: &str,
+        workspace_edit: WorkspaceEdit,
+    ) -> Result<(), NeovimError>;
 }
 
 pub struct NeovimHandler<T> {
@@ -148,7 +164,7 @@ pub struct UserData {
     pub unknowns: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 pub struct LSPDiagnostic {
     pub code: Option<String>,
     pub message: String,
@@ -188,8 +204,55 @@ pub struct TextDocumentIdentifier {
     version: Option<i32>,
 }
 
+/// This is a Visitor that forwards string types to T's `FromStr` impl and
+/// forwards map types to T's `Deserialize` impl. The `PhantomData` is to
+/// keep the compiler from complaining about T being an unused generic type
+/// parameter. We need T in order to know the Value type for the Visitor
+/// impl.
+struct StringOrStruct<T>(PhantomData<fn() -> T>);
+
+impl<'de, T> Visitor<'de> for StringOrStruct<T>
+where
+    T: Deserialize<'de> + FromStr,
+    <T as FromStr>::Err: Display,
+{
+    type Value = T;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("string or map")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<T, E>
+    where
+        E: de::Error,
+    {
+        FromStr::from_str(value).map_err(de::Error::custom)
+    }
+
+    fn visit_map<M>(self, map: M) -> Result<T, M::Error>
+    where
+        M: MapAccess<'de>,
+    {
+        // `MapAccessDeserializer` is a wrapper that turns a `MapAccess`
+        // into a `Deserializer`, allowing it to be used as the input to T's
+        // `Deserialize` implementation. T then deserializes itself using
+        // the entries from the map visitor.
+        Deserialize::deserialize(de::value::MapAccessDeserializer::new(map))
+    }
+}
+
+/// Custom deserializer function that handles both formats
+pub fn string_or_struct<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + FromStr,
+    <T as FromStr>::Err: Display,
+{
+    deserializer.deserialize_any(StringOrStruct(PhantomData))
+}
+
 /// Universal identifier for text documents supporting multiple reference types
-#[derive(Debug, Clone, PartialEq, serde::Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentIdentifier {
     /// Reference by Neovim buffer ID (for currently open files)
@@ -200,65 +263,19 @@ pub enum DocumentIdentifier {
     AbsolutePath(PathBuf),
 }
 
-/// Supports both string and struct deserialization for DocumentIdentifier.
-/// Compatible with Claude Code when using subscription.
-struct DocumentIdentifierVisitor;
+macro_rules! impl_fromstr_serde_json {
+    ($type:ty) => {
+        impl FromStr for $type {
+            type Err = serde_json::Error;
 
-impl<'de> Visitor<'de> for DocumentIdentifierVisitor {
-    type Value = DocumentIdentifier;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("string or object")
-    }
-
-    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        serde_json::from_str(value)
-            .map_err(|e| de::Error::custom(format!("Failed to parse JSON string: {}", e)))
-    }
-
-    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
-    where
-        M: MapAccess<'de>,
-    {
-        while let Some(key) = map.next_key::<String>()? {
-            match key.as_str() {
-                "buffer_id" => {
-                    let value: u64 = map.next_value()?;
-                    return Ok(DocumentIdentifier::BufferId(value));
-                }
-                "project_relative_path" => {
-                    let value: String = map.next_value()?;
-                    return Ok(DocumentIdentifier::ProjectRelativePath(PathBuf::from(
-                        value,
-                    )));
-                }
-                "absolute_path" => {
-                    let value: String = map.next_value()?;
-                    return Ok(DocumentIdentifier::AbsolutePath(PathBuf::from(value)));
-                }
-                _ => {
-                    // Skip unknown keys to be forward compatible
-                    let _: serde::de::IgnoredAny = map.next_value()?;
-                }
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                serde_json::from_str(s)
             }
         }
-        Err(de::Error::custom(
-            "Expected one of: buffer_id, project_relative_path, or absolute_path",
-        ))
-    }
+    };
 }
 
-impl<'de> Deserialize<'de> for DocumentIdentifier {
-    fn deserialize<D>(deserializer: D) -> Result<DocumentIdentifier, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_any(DocumentIdentifierVisitor)
-    }
-}
+impl_fromstr_serde_json!(DocumentIdentifier);
 
 impl DocumentIdentifier {
     /// Create from buffer ID
@@ -279,7 +296,7 @@ impl DocumentIdentifier {
 
 /// Position in a text document expressed as zero-based line and zero-based character offset.
 /// A position is between two characters like an 'insert' cursor in an editor.
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 pub struct Position {
     /// Line position in a document (zero-based).
     pub line: u64,
@@ -291,7 +308,7 @@ pub struct Position {
     pub character: u64,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 pub struct Range {
     /// The range's start position.
     pub start: Position,
@@ -306,7 +323,7 @@ pub struct Range {
 ///
 /// The set of kinds is open and client needs to announce the kinds it supports
 /// to the server during initialization.
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum CodeActionKind {
     /// Empty kind.
@@ -367,12 +384,15 @@ pub enum CodeActionKind {
     /// @since 3.17.0
     #[serde(rename = "source.fixAll")]
     SourceFixAll,
+
+    #[serde(untagged)]
+    Unknown(String),
 }
 
 /// The reason why code actions were requested.
 ///
 /// @since 3.17.0
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 pub enum CodeActionTriggerKind {
     /// Code actions were explicitly requested by the user or by an extension.
     Invoked = 1,
@@ -384,7 +404,7 @@ pub enum CodeActionTriggerKind {
 }
 /// Contains additional diagnostic information about the context in which
 /// a code action is run.
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CodeActionContext {
     /// Requested kind of actions to return.
@@ -417,7 +437,7 @@ pub struct CodeActionParams {
     pub context: CodeActionContext,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 pub struct Disabled {
     /// Human readable description of why the code action is currently
     /// disabled.
@@ -427,7 +447,7 @@ pub struct Disabled {
 }
 
 /// A textual edit applicable to a text document.
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TextEdit {
     /// The range of the text document to be manipulated. To insert
@@ -440,7 +460,7 @@ pub struct TextEdit {
     annotation_id: Option<String>,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceEdit {
     /// Holds changes to existing resources.
@@ -471,7 +491,9 @@ pub struct WorkspaceEdit {
     change_annotations: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+impl_fromstr_serde_json!(WorkspaceEdit);
+
+#[derive(Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 pub struct Command {
     /// Title of the command, like `save`.
     title: String,
@@ -487,7 +509,7 @@ pub struct Command {
 ///
 /// A CodeAction must set either `edit` and/or a `command`. If both are supplied,
 /// the `edit` is applied first, then the `command` is executed.
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CodeAction {
     /// A short, human-readable, title for this code action.
@@ -542,6 +564,25 @@ pub struct CodeAction {
     /// @since 3.16.0
     data: Option<serde_json::Value>,
 }
+
+impl CodeAction {
+    /// Get the title of the code action
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    /// Get the workspace edit if available
+    pub fn edit(&self) -> Option<&WorkspaceEdit> {
+        self.edit.as_ref()
+    }
+
+    /// Check if this code action has a workspace edit
+    pub fn has_edit(&self) -> bool {
+        self.edit.is_some()
+    }
+}
+
+impl_fromstr_serde_json!(CodeAction);
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -875,6 +916,28 @@ pub fn make_text_document_identifier_from_path<P: AsRef<Path>>(
     })
 }
 
+/// Nvim execute_lua custom result type
+#[derive(Debug, serde::Deserialize)]
+pub enum NvimExecuteLuaResult<T> {
+    #[serde(rename = "err_msg")]
+    Error(String),
+    #[serde(rename = "result")]
+    Ok(T),
+    #[serde(rename = "err")]
+    LspError { message: String, code: i32 },
+}
+
+impl<T> From<NvimExecuteLuaResult<T>> for Result<T, NeovimError> {
+    fn from(val: NvimExecuteLuaResult<T>) -> Self {
+        use NvimExecuteLuaResult::*;
+        match val {
+            Ok(result) => Result::Ok(result),
+            Error(msg) => Err(NeovimError::Api(msg)),
+            LspError { message, code } => Err(NeovimError::Lsp { code, message }),
+        }
+    }
+}
+
 impl NeovimClient<Connection> {
     #[instrument(skip(self))]
     pub async fn connect_path(&mut self, path: &str) -> Result<(), NeovimError> {
@@ -1075,273 +1138,6 @@ where
             }
         }
     }
-
-    /// Enhanced code actions method supporting universal document identification
-    #[instrument(skip(self))]
-    pub async fn lsp_get_code_actions(
-        &self,
-        client_name: &str,
-        document: DocumentIdentifier,
-        range: Range,
-    ) -> Result<Vec<CodeAction>, NeovimError> {
-        let text_document = self.resolve_text_document_identifier(&document).await?;
-
-        let diagnostics = match &document {
-            DocumentIdentifier::BufferId(buffer_id) => self
-                .get_buffer_diagnostics(*buffer_id)
-                .await
-                .map_err(|e| NeovimError::Api(format!("Failed to get diagnostics: {e}")))?,
-            _ => {
-                // For path-based identifiers, diagnostics might not be available
-                Vec::new()
-            }
-        };
-
-        let conn = self.connection.as_ref().ok_or_else(|| {
-            NeovimError::Connection("Not connected to any Neovim instance".to_string())
-        })?;
-
-        // Get buffer ID for Lua execution (needed for some LSP operations)
-        let buffer_id = match &document {
-            DocumentIdentifier::BufferId(id) => *id,
-            _ => 0, // Use buffer 0 as fallback for path-based operations
-        };
-
-        match conn
-            .nvim
-            .execute_lua(
-                include_str!("lua/lsp_client_get_code_actions.lua"),
-                vec![
-                    Value::from(client_name), // client_name
-                    Value::from(
-                        serde_json::to_string(&CodeActionParams {
-                            text_document,
-                            range,
-                            context: CodeActionContext {
-                                diagnostics: diagnostics
-                                    .into_iter()
-                                    .filter_map(|d| d.user_data.map(|u| u.lsp))
-                                    .collect(),
-                                only: None,
-                                trigger_kind: None,
-                            },
-                        })
-                        .unwrap(),
-                    ), // params
-                    Value::from(1000),        // timeout_ms
-                    Value::from(buffer_id),   // bufnr
-                ],
-            )
-            .await
-        {
-            Ok(actions) => {
-                let actions = serde_json::from_str::<CodeActionResult>(actions.as_str().unwrap())
-                    .map_err(|e| {
-                    NeovimError::Api(format!("Failed to parse code actions: {e}"))
-                })?;
-                debug!("Found {} code actions", actions.result.len());
-                Ok(actions.result)
-            }
-            Err(e) => {
-                debug!("Failed to get LSP code actions: {}", e);
-                Err(NeovimError::Api(format!(
-                    "Failed to get LSP code actions: {e}"
-                )))
-            }
-        }
-    }
-
-    /// Enhanced hover method supporting universal document identification
-    #[instrument(skip(self))]
-    pub async fn lsp_hover(
-        &self,
-        client_name: &str,
-        document: DocumentIdentifier,
-        position: Position,
-    ) -> Result<HoverResult, NeovimError> {
-        let text_document = self.resolve_text_document_identifier(&document).await?;
-
-        let conn = self.connection.as_ref().ok_or_else(|| {
-            NeovimError::Connection("Not connected to any Neovim instance".to_string())
-        })?;
-
-        // Get buffer ID for Lua execution (needed for some LSP operations)
-        let buffer_id = match &document {
-            DocumentIdentifier::BufferId(id) => *id,
-            _ => 0, // Use buffer 0 as fallback for path-based operations
-        };
-
-        match conn
-            .nvim
-            .execute_lua(
-                include_str!("lua/lsp_hover.lua"),
-                vec![
-                    Value::from(client_name), // client_name
-                    Value::from(
-                        serde_json::to_string(&HoverParams {
-                            text_document,
-                            position,
-                        })
-                        .unwrap(),
-                    ), // params
-                    Value::from(1000),        // timeout_ms
-                    Value::from(buffer_id),   // bufnr
-                ],
-            )
-            .await
-        {
-            Ok(result) => {
-                debug!("LSP Hover retrieved successfully");
-                #[derive(Debug, serde::Deserialize)]
-                struct Result {
-                    result: HoverResult,
-                }
-                let result: Result = match serde_json::from_str(result.as_str().unwrap()) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        debug!("Failed to parse hover result: {}", e);
-                        return Err(NeovimError::Api(format!(
-                            "Failed to parse hover result: {e}"
-                        )));
-                    }
-                };
-                Ok(result.result)
-            }
-            Err(e) => {
-                debug!("Failed to get LSP hover: {}", e);
-                Err(NeovimError::Api(format!("Failed to get LSP hover: {e}")))
-            }
-        }
-    }
-
-    /// Enhanced document symbols method supporting universal document identification
-    #[instrument(skip(self))]
-    pub async fn lsp_document_symbols(
-        &self,
-        client_name: &str,
-        document: DocumentIdentifier,
-    ) -> Result<Option<DocumentSymbolResult>, NeovimError> {
-        let text_document = self.resolve_text_document_identifier(&document).await?;
-
-        let conn = self.connection.as_ref().ok_or_else(|| {
-            NeovimError::Connection("Not connected to any Neovim instance".to_string())
-        })?;
-
-        // Get buffer ID for Lua execution (needed for some LSP operations)
-        let buffer_id = match &document {
-            DocumentIdentifier::BufferId(id) => *id,
-            _ => 0, // Use buffer 0 as fallback for path-based operations
-        };
-
-        match conn
-            .nvim
-            .execute_lua(
-                include_str!("lua/lsp_document_symbols.lua"),
-                vec![
-                    Value::from(client_name), // client_name
-                    Value::from(
-                        serde_json::to_string(&DocumentSymbolParams { text_document }).unwrap(),
-                    ), // params
-                    Value::from(1000),        // timeout_ms
-                    Value::from(buffer_id),   // bufnr
-                ],
-            )
-            .await
-        {
-            Ok(result) => {
-                debug!("LSP Document symbols retrieved successfully");
-                #[derive(Debug, serde::Deserialize)]
-                struct Result {
-                    result: Option<DocumentSymbolResult>,
-                }
-                let result: Result = match serde_json::from_str(result.as_str().unwrap()) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        debug!("Failed to parse document symbols result: {}", e);
-                        return Err(NeovimError::Api(format!(
-                            "Failed to parse document symbols result: {e}"
-                        )));
-                    }
-                };
-                Ok(result.result)
-            }
-            Err(e) => {
-                debug!("Failed to get document symbols: {}", e);
-                Err(NeovimError::Api(format!(
-                    "Failed to get document symbols: {e}"
-                )))
-            }
-        }
-    }
-
-    /// Enhanced references method supporting universal document identification
-    #[instrument(skip(self))]
-    pub async fn lsp_references(
-        &self,
-        client_name: &str,
-        document: DocumentIdentifier,
-        position: Position,
-        include_declaration: bool,
-    ) -> Result<Vec<Location>, NeovimError> {
-        let text_document = self.resolve_text_document_identifier(&document).await?;
-
-        let conn = self.connection.as_ref().ok_or_else(|| {
-            NeovimError::Connection("Not connected to any Neovim instance".to_string())
-        })?;
-
-        // Get buffer ID for Lua execution (needed for some LSP operations)
-        let buffer_id = match &document {
-            DocumentIdentifier::BufferId(id) => *id,
-            _ => 0, // Use buffer 0 as fallback for path-based operations
-        };
-
-        match conn
-            .nvim
-            .execute_lua(
-                include_str!("lua/lsp_references.lua"),
-                vec![
-                    Value::from(client_name), // client_name
-                    Value::from(
-                        serde_json::to_string(&ReferenceParams {
-                            text_document,
-                            position,
-                            context: ReferenceContext {
-                                include_declaration,
-                            },
-                        })
-                        .unwrap(),
-                    ), // params
-                    Value::from(1000),        // timeout_ms
-                    Value::from(buffer_id),   // bufnr
-                ],
-            )
-            .await
-        {
-            Ok(result) => {
-                debug!("LSP References retrieved successfully");
-                #[derive(Debug, serde::Deserialize)]
-                struct Result {
-                    result: Option<Vec<Location>>,
-                }
-                let result: Result = match serde_json::from_str(result.as_str().unwrap()) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        debug!("Failed to parse references result: {}", e);
-                        return Err(NeovimError::Api(format!(
-                            "Failed to parse references result: {e}"
-                        )));
-                    }
-                };
-                Ok(result.result.unwrap_or_default())
-            }
-            Err(e) => {
-                debug!("Failed to get LSP references: {}", e);
-                Err(NeovimError::Api(format!(
-                    "Failed to get LSP references: {e}"
-                )))
-            }
-        }
-    }
 }
 
 #[async_trait]
@@ -1497,8 +1293,71 @@ where
         document: DocumentIdentifier,
         range: Range,
     ) -> Result<Vec<CodeAction>, NeovimError> {
-        self.lsp_get_code_actions(client_name, document, range)
+        let text_document = self.resolve_text_document_identifier(&document).await?;
+
+        let diagnostics = match &document {
+            DocumentIdentifier::BufferId(buffer_id) => self
+                .get_buffer_diagnostics(*buffer_id)
+                .await
+                .map_err(|e| NeovimError::Api(format!("Failed to get diagnostics: {e}")))?,
+            _ => {
+                // For path-based identifiers, diagnostics might not be available
+                Vec::new()
+            }
+        };
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        // Get buffer ID for Lua execution (needed for some LSP operations)
+        let buffer_id = match &document {
+            DocumentIdentifier::BufferId(id) => *id,
+            _ => 0, // Use buffer 0 as fallback for path-based operations
+        };
+
+        match conn
+            .nvim
+            .execute_lua(
+                include_str!("lua/lsp_client_get_code_actions.lua"),
+                vec![
+                    Value::from(client_name), // client_name
+                    Value::from(
+                        serde_json::to_string(&CodeActionParams {
+                            text_document,
+                            range,
+                            context: CodeActionContext {
+                                diagnostics: diagnostics
+                                    .into_iter()
+                                    .filter_map(|d| d.user_data.map(|u| u.lsp))
+                                    .collect(),
+                                only: None,
+                                trigger_kind: None,
+                            },
+                        })
+                        .unwrap(),
+                    ), // params
+                    Value::from(1000),        // timeout_ms
+                    Value::from(buffer_id),   // bufnr
+                ],
+            )
             .await
+        {
+            Ok(actions) => {
+                let actions = serde_json::from_str::<CodeActionResult>(actions.as_str().unwrap())
+                    .map_err(|e| {
+                    NeovimError::Api(format!("Failed to parse code actions: {e}"))
+                })?;
+                debug!("Found {} code actions", actions.result.len());
+                Ok(actions.result)
+            }
+            Err(e) => {
+                debug!("Failed to get LSP code actions: {}", e);
+                Err(NeovimError::Api(format!(
+                    "Failed to get LSP code actions: {e}"
+                )))
+            }
+        }
     }
 
     #[instrument(skip(self))]
@@ -1508,7 +1367,55 @@ where
         document: DocumentIdentifier,
         position: Position,
     ) -> Result<HoverResult, NeovimError> {
-        self.lsp_hover(client_name, document, position).await
+        let text_document = self.resolve_text_document_identifier(&document).await?;
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        // Get buffer ID for Lua execution (needed for some LSP operations)
+        let buffer_id = match &document {
+            DocumentIdentifier::BufferId(id) => *id,
+            _ => 0, // Use buffer 0 as fallback for path-based operations
+        };
+
+        match conn
+            .nvim
+            .execute_lua(
+                include_str!("lua/lsp_hover.lua"),
+                vec![
+                    Value::from(client_name), // client_name
+                    Value::from(
+                        serde_json::to_string(&HoverParams {
+                            text_document,
+                            position,
+                        })
+                        .unwrap(),
+                    ), // params
+                    Value::from(1000),        // timeout_ms
+                    Value::from(buffer_id),   // bufnr
+                ],
+            )
+            .await
+        {
+            Ok(result) => {
+                match serde_json::from_str::<NvimExecuteLuaResult<HoverResult>>(
+                    result.as_str().unwrap(),
+                ) {
+                    Ok(d) => d.into(),
+                    Err(e) => {
+                        debug!("Failed to parse hover result: {e}");
+                        Err(NeovimError::Api(format!(
+                            "Failed to parse hover result: {e}"
+                        )))
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Failed to get LSP hover: {}", e);
+                Err(NeovimError::Api(format!("Failed to get LSP hover: {e}")))
+            }
+        }
     }
 
     #[instrument(skip(self))]
@@ -1517,7 +1424,53 @@ where
         client_name: &str,
         document: DocumentIdentifier,
     ) -> Result<Option<DocumentSymbolResult>, NeovimError> {
-        self.lsp_document_symbols(client_name, document).await
+        let text_document = self.resolve_text_document_identifier(&document).await?;
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        // Get buffer ID for Lua execution (needed for some LSP operations)
+        let buffer_id = match &document {
+            DocumentIdentifier::BufferId(id) => *id,
+            _ => 0, // Use buffer 0 as fallback for path-based operations
+        };
+
+        match conn
+            .nvim
+            .execute_lua(
+                include_str!("lua/lsp_document_symbols.lua"),
+                vec![
+                    Value::from(client_name), // client_name
+                    Value::from(
+                        serde_json::to_string(&DocumentSymbolParams { text_document }).unwrap(),
+                    ), // params
+                    Value::from(1000),        // timeout_ms
+                    Value::from(buffer_id),   // bufnr
+                ],
+            )
+            .await
+        {
+            Ok(result) => {
+                match serde_json::from_str::<NvimExecuteLuaResult<Option<DocumentSymbolResult>>>(
+                    result.as_str().unwrap(),
+                ) {
+                    Ok(d) => d.into(),
+                    Err(e) => {
+                        debug!("Failed to parse document symbols result: {e}");
+                        Err(NeovimError::Api(format!(
+                            "Failed to parse document symbols result: {e}"
+                        )))
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Failed to get document symbols: {}", e);
+                Err(NeovimError::Api(format!(
+                    "Failed to get document symbols: {e}"
+                )))
+            }
+        }
     }
 
     #[instrument(skip(self))]
@@ -1548,18 +1501,17 @@ where
             .await
         {
             Ok(result) => {
-                debug!("LSP Workspace symbols retrieved successfully");
-                let result: WorkspaceSymbolResult =
-                    match serde_json::from_str(result.as_str().unwrap()) {
-                        Ok(d) => d,
-                        Err(e) => {
-                            debug!("Failed to parse workspace symbols result: {}", e);
-                            return Err(NeovimError::Api(format!(
-                                "Failed to parse workspace symbols result: {e}"
-                            )));
-                        }
-                    };
-                Ok(result)
+                match serde_json::from_str::<NvimExecuteLuaResult<WorkspaceSymbolResult>>(
+                    result.as_str().unwrap(),
+                ) {
+                    Ok(d) => d.into(),
+                    Err(e) => {
+                        debug!("Failed to parse workspace symbols result: {e}");
+                        Err(NeovimError::Api(format!(
+                            "Failed to parse workspace symbols result: {e}"
+                        )))
+                    }
+                }
             }
             Err(e) => {
                 debug!("Failed to get workspace symbols: {}", e);
@@ -1578,8 +1530,153 @@ where
         position: Position,
         include_declaration: bool,
     ) -> Result<Vec<Location>, NeovimError> {
-        self.lsp_references(client_name, document, position, include_declaration)
+        let text_document = self.resolve_text_document_identifier(&document).await?;
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        // Get buffer ID for Lua execution (needed for some LSP operations)
+        let buffer_id = match &document {
+            DocumentIdentifier::BufferId(id) => *id,
+            _ => 0, // Use buffer 0 as fallback for path-based operations
+        };
+
+        match conn
+            .nvim
+            .execute_lua(
+                include_str!("lua/lsp_references.lua"),
+                vec![
+                    Value::from(client_name), // client_name
+                    Value::from(
+                        serde_json::to_string(&ReferenceParams {
+                            text_document,
+                            position,
+                            context: ReferenceContext {
+                                include_declaration,
+                            },
+                        })
+                        .unwrap(),
+                    ), // params
+                    Value::from(1000),        // timeout_ms
+                    Value::from(buffer_id),   // bufnr
+                ],
+            )
             .await
+        {
+            Ok(result) => {
+                match serde_json::from_str::<NvimExecuteLuaResult<Option<Vec<Location>>>>(
+                    result.as_str().unwrap(),
+                ) {
+                    Ok(d) => {
+                        let result: Result<Option<Vec<Location>>, NeovimError> = d.into();
+                        result.map(|opt| opt.unwrap_or_default())
+                    }
+                    Err(e) => {
+                        debug!("Failed to parse references result: {e}");
+                        Err(NeovimError::Api(format!(
+                            "Failed to parse references result: {e}"
+                        )))
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Failed to get LSP references: {}", e);
+                Err(NeovimError::Api(format!(
+                    "Failed to get LSP references: {e}"
+                )))
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn lsp_resolve_code_action(
+        &self,
+        client_name: &str,
+        code_action: CodeAction,
+    ) -> Result<CodeAction, NeovimError> {
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        match conn
+            .nvim
+            .execute_lua(
+                include_str!("lua/lsp_resolve_code_action.lua"),
+                vec![
+                    Value::from(client_name),
+                    Value::from(serde_json::to_string(&code_action).map_err(|e| {
+                        NeovimError::Api(format!("Failed to serialize code action: {e}"))
+                    })?),
+                    Value::from(5000), // timeout_ms
+                    Value::from(0),    // bufnr (not needed for this request)
+                ],
+            )
+            .await
+        {
+            Ok(result) => {
+                match serde_json::from_str::<NvimExecuteLuaResult<CodeAction>>(
+                    result.as_str().unwrap(),
+                ) {
+                    Ok(d) => d.into(),
+                    Err(e) => {
+                        debug!("Failed to parse resolve code action result: {e}");
+                        Err(NeovimError::Api(format!(
+                            "Failed to parse resolve code action result: {e}"
+                        )))
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Failed to resolve LSP code action: {}", e);
+                Err(NeovimError::Api(format!(
+                    "Failed to resolve LSP code action: {e}"
+                )))
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn lsp_apply_workspace_edit(
+        &self,
+        client_name: &str,
+        workspace_edit: WorkspaceEdit,
+    ) -> Result<(), NeovimError> {
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        match conn
+            .nvim
+            .execute_lua(
+                include_str!("lua/lsp_apply_workspace_edit.lua"),
+                vec![
+                    Value::from(client_name),
+                    Value::from(serde_json::to_string(&workspace_edit).map_err(|e| {
+                        NeovimError::Api(format!("Failed to serialize workspace edit: {e}"))
+                    })?),
+                ],
+            )
+            .await
+        {
+            Ok(result) => {
+                match serde_json::from_str::<NvimExecuteLuaResult<()>>(result.as_str().unwrap()) {
+                    Ok(rv) => rv.into(),
+                    Err(e) => {
+                        debug!("Failed to parse apply workspace edit result: {}", e);
+                        Err(NeovimError::Api(format!(
+                            "Failed to parse apply workspace edit result: {e}"
+                        )))
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Failed to apply LSP workspace edit: {}", e);
+                Err(NeovimError::Api(format!(
+                    "Failed to apply LSP workspace edit: {e}"
+                )))
+            }
+        }
     }
 }
 
@@ -1691,6 +1788,12 @@ mod tests {
         assert!(json.contains("context"));
         assert!(json.contains("includeDeclaration"));
         assert!(json.contains("true"));
+    }
+
+    #[derive(serde::Deserialize)]
+    struct DocumentIdentifierWrapper {
+        #[serde(deserialize_with = "string_or_struct")]
+        pub identifier: DocumentIdentifier,
     }
 
     #[test]
@@ -1850,32 +1953,6 @@ mod tests {
     }
 
     #[test]
-    fn test_document_identifier_string_deserializer_via_visitor() {
-        // Test the custom deserializer's visit_str method by passing JSON as a string value
-        // This simulates Claude Code's usage pattern where JSON is embedded as string
-        let json_as_string = r#""{\"buffer_id\": 123}""#;
-        let result: Result<DocumentIdentifier, _> = serde_json::from_str(json_as_string);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), DocumentIdentifier::BufferId(123));
-
-        let json_as_string = r#""{\"project_relative_path\": \"src/lib.rs\"}""#;
-        let result: Result<DocumentIdentifier, _> = serde_json::from_str(json_as_string);
-        assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            DocumentIdentifier::ProjectRelativePath(PathBuf::from("src/lib.rs"))
-        );
-
-        let json_as_string = r#""{\"absolute_path\": \"/home/user/file.rs\"}""#;
-        let result: Result<DocumentIdentifier, _> = serde_json::from_str(json_as_string);
-        assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            DocumentIdentifier::AbsolutePath(PathBuf::from("/home/user/file.rs"))
-        );
-    }
-
-    #[test]
     fn test_document_identifier_string_deserializer_error_cases() {
         // Test invalid JSON string format
         let invalid_json = r#"{"invalid_field": 42}"#;
@@ -1950,9 +2027,164 @@ mod tests {
             assert_eq!(original, deserialized);
 
             // Test string-embedded JSON deserialization (Claude Code use case)
-            let json_string = serde_json::to_string(&json).unwrap();
-            let from_string: DocumentIdentifier = serde_json::from_str(&json_string).unwrap();
-            assert_eq!(original, from_string);
+            let json_string = serde_json::to_string(&serde_json::json!( {
+                "identifier": json,
+            }))
+            .unwrap();
+            let from_string: DocumentIdentifierWrapper =
+                serde_json::from_str(&json_string).unwrap();
+            assert_eq!(original, from_string.identifier);
         }
+    }
+
+    #[test]
+    fn test_code_action_serialization() {
+        let code_action = CodeAction {
+            title: "Fix this issue".to_string(),
+            kind: Some(CodeActionKind::Quickfix),
+            diagnostics: Some(vec![]),
+            is_preferred: Some(true),
+            disabled: None,
+            edit: Some(WorkspaceEdit {
+                changes: Some(std::collections::HashMap::new()),
+                document_changes: None,
+                change_annotations: None,
+            }),
+            command: None,
+            data: None,
+        };
+
+        let json = serde_json::to_string(&code_action).unwrap();
+        assert!(json.contains("Fix this issue"));
+        assert!(json.contains("quickfix"));
+
+        // Test round-trip
+        let deserialized: CodeAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.title, "Fix this issue");
+        assert_eq!(deserialized.kind, Some(CodeActionKind::Quickfix));
+    }
+
+    #[test]
+    fn test_workspace_edit_serialization() {
+        let mut changes = std::collections::HashMap::new();
+        changes.insert(
+            "file:///test.rs".to_string(),
+            vec![TextEdit {
+                range: Range {
+                    start: Position {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 5,
+                    },
+                },
+                new_text: "hello".to_string(),
+                annotation_id: None,
+            }],
+        );
+
+        let workspace_edit = WorkspaceEdit {
+            changes: Some(changes),
+            document_changes: None,
+            change_annotations: None,
+        };
+
+        let json = serde_json::to_string(&workspace_edit).unwrap();
+        assert!(json.contains("file:///test.rs"));
+        assert!(json.contains("hello"));
+
+        // Test round-trip
+        let deserialized: WorkspaceEdit = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.changes.is_some());
+    }
+
+    #[derive(serde::Deserialize)]
+    struct CodeActionWrapper {
+        #[serde(deserialize_with = "string_or_struct")]
+        pub code_action: CodeAction,
+    }
+
+    #[test]
+    fn test_code_action_string_deserialization() {
+        // Test that CodeAction can deserialize from both object and string formats
+        let code_action = CodeAction {
+            title: "Fix this issue".to_string(),
+            kind: Some(CodeActionKind::Quickfix),
+            diagnostics: None,
+            is_preferred: Some(true),
+            disabled: None,
+            edit: None,
+            command: None,
+            data: None,
+        };
+
+        // Serialize to JSON string
+        let json = serde_json::to_string(&code_action).unwrap();
+
+        // Test direct object deserialization
+        let deserialized_object: CodeAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized_object.title, "Fix this issue");
+        assert_eq!(deserialized_object.kind, Some(CodeActionKind::Quickfix));
+
+        // Test string-wrapped deserialization
+        let json_string = serde_json::json!({
+            "code_action": json
+        });
+        let deserialized: CodeActionWrapper = serde_json::from_value(json_string).unwrap();
+        let deserialized = deserialized.code_action;
+        assert_eq!(deserialized.title, "Fix this issue");
+        assert_eq!(deserialized.kind, Some(CodeActionKind::Quickfix));
+    }
+
+    #[derive(serde::Deserialize)]
+    struct WorkspaceEditWrapper {
+        #[serde(deserialize_with = "string_or_struct")]
+        pub workspace_edit: WorkspaceEdit,
+    }
+
+    #[test]
+    fn test_workspace_edit_string_deserialization() {
+        // Test that WorkspaceEdit can deserialize from both object and string formats
+        let mut changes = std::collections::HashMap::new();
+        changes.insert(
+            "file:///test.rs".to_string(),
+            vec![TextEdit {
+                range: Range {
+                    start: Position {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 5,
+                    },
+                },
+                new_text: "hello".to_string(),
+                annotation_id: None,
+            }],
+        );
+
+        let workspace_edit = WorkspaceEdit {
+            changes: Some(changes),
+            document_changes: None,
+            change_annotations: None,
+        };
+
+        // Serialize to JSON string
+        let json = serde_json::to_string(&workspace_edit).unwrap();
+
+        // Test direct object deserialization
+        let deserialized_object: WorkspaceEdit = serde_json::from_str(&json).unwrap();
+        assert!(deserialized_object.changes.is_some());
+
+        // Test string-wrapped deserialization
+        let json_string = serde_json::json!({
+            "workspace_edit": json
+        });
+        let deserialized: WorkspaceEditWrapper = serde_json::from_value(json_string).unwrap();
+        let deserialized = deserialized.workspace_edit;
+        assert!(deserialized.changes.is_some());
     }
 }
