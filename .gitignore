@@ -3,3 +3,4 @@
 *.log
 .lazy.lua
 .direnv
+.envrc
