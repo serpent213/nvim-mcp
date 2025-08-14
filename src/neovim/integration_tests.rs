@@ -576,6 +576,11 @@ func main() {
     assert!(result.is_ok(), "Failed to get definition: {result:?}");
     let definition_result = result.unwrap();
     info!("Definition result found: {:?}", definition_result);
+    assert!(
+        definition_result.is_some(),
+        "Definition result should not be empty"
+    );
+    let definition_result = definition_result.unwrap();
 
     // Extract the first location from the definition result
     let first_location = match &definition_result {

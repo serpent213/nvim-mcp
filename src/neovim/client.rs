@@ -88,7 +88,7 @@ pub trait NeovimClientTrait: Sync {
         client_name: &str,
         document: DocumentIdentifier,
         position: Position,
-    ) -> Result<DefinitionResult, NeovimError>;
+    ) -> Result<Option<DefinitionResult>, NeovimError>;
 
     /// Resolve a code action that may have incomplete data
     async fn lsp_resolve_code_action(
@@ -1634,18 +1634,12 @@ where
         client_name: &str,
         document: DocumentIdentifier,
         position: Position,
-    ) -> Result<DefinitionResult, NeovimError> {
+    ) -> Result<Option<DefinitionResult>, NeovimError> {
         let text_document = self.resolve_text_document_identifier(&document).await?;
 
         let conn = self.connection.as_ref().ok_or_else(|| {
             NeovimError::Connection("Not connected to any Neovim instance".to_string())
         })?;
-
-        // Get buffer ID for Lua execution (needed for some LSP operations)
-        let buffer_id = match &document {
-            DocumentIdentifier::BufferId(id) => *id,
-            _ => 0, // Use buffer 0 as fallback for path-based operations
-        };
 
         match conn
             .nvim
@@ -1661,13 +1655,12 @@ where
                         .unwrap(),
                     ), // params
                     Value::from(1000),        // timeout_ms
-                    Value::from(buffer_id),   // buffer_id
                 ],
             )
             .await
         {
             Ok(result) => {
-                match serde_json::from_str::<NvimExecuteLuaResult<DefinitionResult>>(
+                match serde_json::from_str::<NvimExecuteLuaResult<Option<DefinitionResult>>>(
                     result.as_str().unwrap(),
                 ) {
                     Ok(d) => d.into(),

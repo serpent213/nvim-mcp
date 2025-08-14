@@ -1,5 +1,5 @@
 local clients = vim.lsp.get_clients()
-local client_name, params_raw, timeout_ms, bufnr = unpack({ ... })
+local client_name, params_raw, timeout_ms = unpack({ ... })
 local client
 for _, v in ipairs(clients) do
     if v.name == client_name then
@@ -13,7 +13,7 @@ if client == nil then
 end
 
 local params = vim.json.decode(params_raw)
-local result, err = client:request_sync("textDocument/definition", params, timeout_ms, bufnr)
+local result, err = client:request_sync("textDocument/definition", params, timeout_ms)
 if err then
     return vim.json.encode({
         err_msg = string.format(
