@@ -82,6 +82,14 @@ pub trait NeovimClientTrait: Sync {
         include_declaration: bool,
     ) -> Result<Vec<Location>, NeovimError>;
 
+    /// Get definition(s) of a symbol
+    async fn lsp_definition(
+        &self,
+        client_name: &str,
+        document: DocumentIdentifier,
+        position: Position,
+    ) -> Result<Vec<Location>, NeovimError>;
+
     /// Resolve a code action that may have incomplete data
     async fn lsp_resolve_code_action(
         &self,
@@ -586,7 +594,7 @@ impl_fromstr_serde_json!(CodeAction);
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct HoverParams {
+pub struct TextDocumentPositionParams {
     pub text_document: TextDocumentIdentifier,
     pub position: Position,
 }
@@ -1386,7 +1394,7 @@ where
                 vec![
                     Value::from(client_name), // client_name
                     Value::from(
-                        serde_json::to_string(&HoverParams {
+                        serde_json::to_string(&TextDocumentPositionParams {
                             text_document,
                             position,
                         })
@@ -1584,6 +1592,69 @@ where
                 debug!("Failed to get LSP references: {}", e);
                 Err(NeovimError::Api(format!(
                     "Failed to get LSP references: {e}"
+                )))
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn lsp_definition(
+        &self,
+        client_name: &str,
+        document: DocumentIdentifier,
+        position: Position,
+    ) -> Result<Vec<Location>, NeovimError> {
+        let text_document = self.resolve_text_document_identifier(&document).await?;
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        // Get buffer ID for Lua execution (needed for some LSP operations)
+        let buffer_id = match &document {
+            DocumentIdentifier::BufferId(id) => *id,
+            _ => 0, // Use buffer 0 as fallback for path-based operations
+        };
+
+        match conn
+            .nvim
+            .execute_lua(
+                include_str!("lua/lsp_definition.lua"),
+                vec![
+                    Value::from(client_name), // client_name
+                    Value::from(
+                        serde_json::to_string(&TextDocumentPositionParams {
+                            text_document,
+                            position,
+                        })
+                        .unwrap(),
+                    ), // params
+                    Value::from(1000),        // timeout_ms
+                    Value::from(buffer_id),   // buffer_id
+                ],
+            )
+            .await
+        {
+            Ok(result) => {
+                match serde_json::from_str::<NvimExecuteLuaResult<Option<Vec<Location>>>>(
+                    result.as_str().unwrap(),
+                ) {
+                    Ok(d) => {
+                        let result: Result<Option<Vec<Location>>, NeovimError> = d.into();
+                        result.map(|opt| opt.unwrap_or_default())
+                    }
+                    Err(e) => {
+                        debug!("Failed to parse definition result: {e}");
+                        Err(NeovimError::Api(format!(
+                            "Failed to parse definition result: {e}"
+                        )))
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Failed to get LSP definition: {}", e);
+                Err(NeovimError::Api(format!(
+                    "Failed to get LSP definition: {e}"
                 )))
             }
         }

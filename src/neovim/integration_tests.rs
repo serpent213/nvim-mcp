@@ -506,3 +506,94 @@ async fn test_lsp_apply_workspace_edit() {
 
     // Temp directory and file automatically cleaned up when temp_dir is dropped
 }
+
+#[tokio::test]
+#[traced_test]
+async fn test_lsp_definition() {
+    // Create a temporary directory and file
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let temp_file_path = temp_dir.path().join("test_definition.go");
+
+    // Create a Go file with a function definition and call
+    let go_content = r#"package main
+
+import "fmt"
+
+func sayHello(name string) string {
+    return "Hello, " + name
+}
+
+func main() {
+    message := sayHello("World")
+    fmt.Println(message)
+}
+"#;
+
+    fs::write(&temp_file_path, go_content).expect("Failed to write Go file");
+
+    // Setup Neovim with gopls
+    let ipc_path = generate_random_ipc_path();
+    let child = setup_neovim_instance_ipc_advance(
+        &ipc_path,
+        get_testdata_path("cfg_lsp.lua").to_str().unwrap(),
+        temp_file_path.to_str().unwrap(),
+    )
+    .await;
+    let _guard = NeovimIpcGuard::new(child, ipc_path.clone());
+    let mut client = NeovimClient::new();
+
+    // Connect to instance
+    let result = client.connect_path(&ipc_path).await;
+    assert!(result.is_ok(), "Failed to connect to instance");
+
+    // Set up diagnostics and wait for LSP
+    let result = client.setup_diagnostics_changed_autocmd().await;
+    assert!(
+        result.is_ok(),
+        "Failed to setup diagnostics autocmd: {result:?}"
+    );
+
+    sleep(Duration::from_secs(15)).await; // Allow time for LSP to initialize
+
+    // Get LSP clients
+    let lsp_clients = client.lsp_get_clients().await.unwrap();
+    info!("LSP clients: {:?}", lsp_clients);
+    assert!(!lsp_clients.is_empty(), "No LSP clients found");
+
+    // Test definition lookup for sayHello function call on line 9 (0-indexed)
+    // Position cursor on "sayHello" in the function call
+    let result = client
+        .lsp_definition(
+            "gopls",
+            DocumentIdentifier::from_buffer_id(1), // First opened file
+            Position {
+                line: 9,       // Line with sayHello call
+                character: 17, // Position on "sayHello"
+            },
+        )
+        .await;
+
+    assert!(result.is_ok(), "Failed to get definition: {result:?}");
+    let definitions = result.unwrap();
+    info!("Definitions found: {:?}", definitions);
+
+    // Verify we found at least one definition
+    assert!(!definitions.is_empty(), "No definitions found");
+
+    // Verify the definition points to the function declaration
+    let definition = &definitions[0];
+    assert!(
+        definition.uri.contains("test_definition.go"),
+        "Definition should point to the same file"
+    );
+
+    // The definition should point to line 4 (0-indexed) where the function is defined
+    assert_eq!(
+        definition.range.start.line, 4,
+        "Definition should point to line 4 where sayHello function is defined"
+    );
+
+    info!("✅ LSP definition lookup successful!");
+
+    // Temp directory and file automatically cleaned up when temp_dir is dropped
+}
