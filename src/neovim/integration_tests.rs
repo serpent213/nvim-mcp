@@ -574,22 +574,42 @@ func main() {
         .await;
 
     assert!(result.is_ok(), "Failed to get definition: {result:?}");
-    let definitions = result.unwrap();
-    info!("Definitions found: {:?}", definitions);
+    let definition_result = result.unwrap();
+    info!("Definition result found: {:?}", definition_result);
 
-    // Verify we found at least one definition
-    assert!(!definitions.is_empty(), "No definitions found");
+    // Extract the first location from the definition result
+    let first_location = match &definition_result {
+        crate::neovim::client::DefinitionResult::Single(loc) => loc,
+        crate::neovim::client::DefinitionResult::Locations(locs) => {
+            assert!(!locs.is_empty(), "No definitions found");
+            &locs[0]
+        }
+        crate::neovim::client::DefinitionResult::LocationLinks(links) => {
+            assert!(!links.is_empty(), "No definitions found");
+            // For LocationLinks, we create a Location from the target info
+            let link = &links[0];
+            assert!(
+                link.target_uri.contains("test_definition.go"),
+                "Definition should point to the same file"
+            );
+            // The definition should point to line 4 (0-indexed) where the function is defined
+            assert_eq!(
+                link.target_range.start.line, 4,
+                "Definition should point to line 4 where sayHello function is defined"
+            );
+            return; // Early return for LocationLinks case
+        }
+    };
 
-    // Verify the definition points to the function declaration
-    let definition = &definitions[0];
+    // For Location cases
     assert!(
-        definition.uri.contains("test_definition.go"),
+        first_location.uri.contains("test_definition.go"),
         "Definition should point to the same file"
     );
 
     // The definition should point to line 4 (0-indexed) where the function is defined
     assert_eq!(
-        definition.range.start.line, 4,
+        first_location.range.start.line, 4,
         "Definition should point to line 4 where sayHello function is defined"
     );
 

@@ -88,7 +88,7 @@ pub trait NeovimClientTrait: Sync {
         client_name: &str,
         document: DocumentIdentifier,
         position: Position,
-    ) -> Result<Vec<Location>, NeovimError>;
+    ) -> Result<DefinitionResult, NeovimError>;
 
     /// Resolve a code action that may have incomplete data
     async fn lsp_resolve_code_action(
@@ -791,6 +791,37 @@ impl From<u8> for SymbolTag {
 pub struct Location {
     pub uri: String,
     pub range: Range,
+}
+
+/// Represents a link between a source and a target location.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocationLink {
+    /// Span of the origin of this link.
+    /// Used as the underlined span for mouse interaction. Defaults to the word
+    /// range at the definition position.
+    pub origin_selection_range: Option<Range>,
+    /// The target resource identifier of this link.
+    pub target_uri: String,
+    /// The full target range of this link. If the target for example is a symbol
+    /// then target range is the range enclosing this symbol not including
+    /// leading/trailing whitespace but everything else like comments. This
+    /// information is typically used for highlighting the range in the editor.
+    pub target_range: Range,
+    /// The range that should be selected and revealed when this link is being
+    /// followed, e.g the name of a function. Must be contained by the
+    /// `target_range`. See also `DocumentSymbol#range`
+    pub target_selection_range: Range,
+}
+
+/// The result of a textDocument/definition request.
+/// Can be a single Location, a list of Locations, or a list of LocationLinks.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(untagged)]
+pub enum DefinitionResult {
+    Single(Location),
+    Locations(Vec<Location>),
+    LocationLinks(Vec<LocationLink>),
 }
 
 /// Represents information about programming constructs like variables, classes, interfaces etc.
@@ -1603,7 +1634,7 @@ where
         client_name: &str,
         document: DocumentIdentifier,
         position: Position,
-    ) -> Result<Vec<Location>, NeovimError> {
+    ) -> Result<DefinitionResult, NeovimError> {
         let text_document = self.resolve_text_document_identifier(&document).await?;
 
         let conn = self.connection.as_ref().ok_or_else(|| {
@@ -1636,13 +1667,10 @@ where
             .await
         {
             Ok(result) => {
-                match serde_json::from_str::<NvimExecuteLuaResult<Option<Vec<Location>>>>(
+                match serde_json::from_str::<NvimExecuteLuaResult<DefinitionResult>>(
                     result.as_str().unwrap(),
                 ) {
-                    Ok(d) => {
-                        let result: Result<Option<Vec<Location>>, NeovimError> = d.into();
-                        result.map(|opt| opt.unwrap_or_default())
-                    }
+                    Ok(d) => d.into(),
                     Err(e) => {
                         debug!("Failed to parse definition result: {e}");
                         Err(NeovimError::Api(format!(
