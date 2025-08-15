@@ -1,13 +1,22 @@
 # Changelog
 
+<!-- markdownlint-configure-file
+{
+  "no-duplicate-heading": false
+}
+-->
+
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Added
+## [v0.3.0] - 2025-08-15
+
+### New Features
 
 - **LSP Implementation Support**: Added `lsp_implementations` tool for finding
-  interface/abstract class implementations with universal document identification
+  interface/abstract class implementations with universal document
+  identification (#33)
 - **LSP Definition and Type Definition Support**: Added `lsp_definition` and
   `lsp_type_definition` tools for comprehensive symbol navigation with universal
   document identification
@@ -22,6 +31,16 @@ All notable changes to this project will be documented in this file.
   (buffer IDs, project paths, absolute paths)
 - `lsp_type_definition` - Get LSP type definition with universal document
   identification (buffer IDs, project paths, absolute paths)
+
+### Fixed
+
+- **Package Metadata**: Fixed commit SHA detection for crates.io packages (#38)
+- **Rust Compatibility**: Added minimum supported Rust version (MSRV) requirement
+  to prevent cryptic let-chains errors on older Rust compilers (#37)
+
+### Infrastructure
+
+- **Build System**: Enhanced crate metadata and build-time information
 
 ## [v0.2.0] - 2025-08-14
 
