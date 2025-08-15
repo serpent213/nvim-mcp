@@ -11,6 +11,17 @@ readme = "README.md"
 keywords = ["automation", "mcp", "neovim"]
 categories = ["Development tools"]
 license = "MIT"
+include = [
+  "/src",
+  "/build.rs",
+  "/docs/instructions.md",
+  "/.packaged-commit",
+  "/Cargo.toml",
+  "/Cargo.lock",
+  "/README.md",
+  "/CHANGELOG.md",
+  "/LICENSE",
+]
 
 [dependencies]
 # Async Runtime and Concurrency
