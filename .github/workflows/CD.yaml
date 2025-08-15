@@ -73,4 +73,4 @@ jobs:
 
       - name: Publish crates.io
         run: |
-          cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}
+          cargo publish --token ${{ secrets.CRATES_IO_TOKEN }} --allow-dirty
