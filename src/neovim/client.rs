@@ -88,7 +88,7 @@ pub trait NeovimClientTrait: Sync {
         client_name: &str,
         document: DocumentIdentifier,
         position: Position,
-    ) -> Result<Option<DefinitionResult>, NeovimError>;
+    ) -> Result<Option<LocateResult>, NeovimError>;
 
     /// Get type definition(s) of a symbol
     async fn lsp_type_definition(
@@ -96,7 +96,15 @@ pub trait NeovimClientTrait: Sync {
         client_name: &str,
         document: DocumentIdentifier,
         position: Position,
-    ) -> Result<Option<DefinitionResult>, NeovimError>;
+    ) -> Result<Option<LocateResult>, NeovimError>;
+
+    /// Get implementation(s) of a symbol
+    async fn lsp_implementation(
+        &self,
+        client_name: &str,
+        document: DocumentIdentifier,
+        position: Position,
+    ) -> Result<Option<LocateResult>, NeovimError>;
 
     /// Resolve a code action that may have incomplete data
     async fn lsp_resolve_code_action(
@@ -826,7 +834,7 @@ pub struct LocationLink {
 /// Can be a single Location, a list of Locations, or a list of LocationLinks.
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(untagged)]
-pub enum DefinitionResult {
+pub enum LocateResult {
     Single(Location),
     Locations(Vec<Location>),
     LocationLinks(Vec<LocationLink>),
@@ -1642,7 +1650,7 @@ where
         client_name: &str,
         document: DocumentIdentifier,
         position: Position,
-    ) -> Result<Option<DefinitionResult>, NeovimError> {
+    ) -> Result<Option<LocateResult>, NeovimError> {
         let text_document = self.resolve_text_document_identifier(&document).await?;
 
         let conn = self.connection.as_ref().ok_or_else(|| {
@@ -1668,7 +1676,7 @@ where
             .await
         {
             Ok(result) => {
-                match serde_json::from_str::<NvimExecuteLuaResult<Option<DefinitionResult>>>(
+                match serde_json::from_str::<NvimExecuteLuaResult<Option<LocateResult>>>(
                     result.as_str().unwrap(),
                 ) {
                     Ok(d) => d.into(),
@@ -1695,7 +1703,7 @@ where
         client_name: &str,
         document: DocumentIdentifier,
         position: Position,
-    ) -> Result<Option<DefinitionResult>, NeovimError> {
+    ) -> Result<Option<LocateResult>, NeovimError> {
         let text_document = self.resolve_text_document_identifier(&document).await?;
 
         let conn = self.connection.as_ref().ok_or_else(|| {
@@ -1721,7 +1729,7 @@ where
             .await
         {
             Ok(result) => {
-                match serde_json::from_str::<NvimExecuteLuaResult<Option<DefinitionResult>>>(
+                match serde_json::from_str::<NvimExecuteLuaResult<Option<LocateResult>>>(
                     result.as_str().unwrap(),
                 ) {
                     Ok(d) => d.into(),
@@ -1737,6 +1745,59 @@ where
                 debug!("Failed to get LSP type definition: {}", e);
                 Err(NeovimError::Api(format!(
                     "Failed to get LSP type definition: {e}"
+                )))
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn lsp_implementation(
+        &self,
+        client_name: &str,
+        document: DocumentIdentifier,
+        position: Position,
+    ) -> Result<Option<LocateResult>, NeovimError> {
+        let text_document = self.resolve_text_document_identifier(&document).await?;
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        match conn
+            .nvim
+            .execute_lua(
+                include_str!("lua/lsp_implementation.lua"),
+                vec![
+                    Value::from(client_name), // client_name
+                    Value::from(
+                        serde_json::to_string(&TextDocumentPositionParams {
+                            text_document,
+                            position,
+                        })
+                        .unwrap(),
+                    ), // params
+                    Value::from(1000),        // timeout_ms
+                ],
+            )
+            .await
+        {
+            Ok(result) => {
+                match serde_json::from_str::<NvimExecuteLuaResult<Option<LocateResult>>>(
+                    result.as_str().unwrap(),
+                ) {
+                    Ok(d) => d.into(),
+                    Err(e) => {
+                        debug!("Failed to parse implementation result: {e}");
+                        Err(NeovimError::Api(format!(
+                            "Failed to parse implementation result: {e}"
+                        )))
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Failed to get LSP implementation: {}", e);
+                Err(NeovimError::Api(format!(
+                    "Failed to get LSP implementation: {e}"
                 )))
             }
         }
