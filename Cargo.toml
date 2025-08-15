@@ -9,7 +9,7 @@ homepage = "https://github.com/linw1995/nvim-mcp#readme"
 repository = "https://github.com/linw1995/nvim-mcp"
 readme = "README.md"
 keywords = ["automation", "mcp", "neovim"]
-categories = ["Development tools"]
+categories = ["development-tools"]
 license = "MIT"
 include = [
   "/src",
