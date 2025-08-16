@@ -981,3 +981,209 @@ func main() {
 
     // Temp directory and file automatically cleaned up when temp_dir is dropped
 }
+
+#[tokio::test]
+#[traced_test]
+#[cfg(any(unix, windows))]
+async fn test_lsp_rename_with_prepare() {
+    // Create a temporary directory and file
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let temp_file_path = temp_dir.path().join("test_main.go");
+
+    // Create a Go file with code that gopls can analyze
+    let go_content = include_str!("testdata/main.go");
+    fs::write(&temp_file_path, go_content).expect("Failed to write temp Go file");
+
+    let ipc_path = generate_random_ipc_path();
+    let child = setup_neovim_instance_ipc_advance(
+        &ipc_path,
+        get_testdata_path("cfg_lsp.lua").to_str().unwrap(),
+        temp_file_path.to_str().unwrap(),
+    )
+    .await;
+    let _guard = NeovimIpcGuard::new(child, ipc_path.clone());
+    let mut client = NeovimClient::new();
+
+    // Connect to instance
+    let result = client.connect_path(&ipc_path).await;
+    assert!(result.is_ok(), "Failed to connect to instance");
+
+    // Set up diagnostics and wait for LSP
+    let result = client.setup_diagnostics_changed_autocmd().await;
+    assert!(
+        result.is_ok(),
+        "Failed to setup diagnostics autocmd: {result:?}"
+    );
+
+    sleep(Duration::from_secs(20)).await; // Allow time for LSP to initialize
+
+    // Get LSP clients
+    let lsp_clients = client.lsp_get_clients().await.unwrap();
+    let gopls_client = lsp_clients
+        .iter()
+        .find(|c| c.name == "gopls")
+        .expect("gopls client should be available");
+
+    info!("Found gopls client: {:?}", gopls_client);
+
+    // Try to rename the Greet function to GreetUser (line 6, character 5)
+    let document = DocumentIdentifier::AbsolutePath(temp_file_path.clone());
+    let position = Position {
+        line: 6,      // Greet function definition line (0-indexed)
+        character: 5, // Position of "Greet" function name
+    };
+
+    info!("Testing rename of Greet function to GreetUser...");
+    let rename_result = client
+        .lsp_rename("gopls", document, position, "GreetUser")
+        .await;
+
+    info!("Rename result: {:?}", rename_result);
+
+    if let Ok(Some(workspace_edit)) = rename_result {
+        info!("✅ LSP rename successful!");
+        info!("Workspace edit: {:?}", workspace_edit);
+
+        // Apply the workspace edit to test the functionality
+        info!("Applying workspace edit...");
+        let apply_result = client
+            .lsp_apply_workspace_edit("gopls", workspace_edit)
+            .await;
+
+        assert!(
+            apply_result.is_ok(),
+            "Failed to apply workspace edit: {:?}",
+            apply_result
+        );
+        info!("✅ LSP workspace edit applied successfully!");
+
+        // Save the buffer to persist changes to disk
+        let result = client.execute_lua("vim.cmd('write')").await;
+        assert!(result.is_ok(), "Failed to save buffer: {result:?}");
+
+        // Give some time for the save operation to complete
+        sleep(Duration::from_millis(1000)).await;
+
+        // Read the file content to verify the rename was applied
+        let updated_content =
+            fs::read_to_string(&temp_file_path).expect("Failed to read updated file");
+        info!("Updated content:\n{}", updated_content);
+
+        // The function name should have been changed from "Greet" to "GreetUser"
+        assert!(
+            updated_content.contains("GreetUser"),
+            "File should contain the new function name 'GreetUser'"
+        );
+        assert!(
+            !updated_content.contains("func Greet("),
+            "File should no longer contain the old function signature 'func Greet('"
+        );
+    } else {
+        info!("⚠️ LSP rename not supported or position not renameable");
+    }
+
+    // Temp directory and file automatically cleaned up when temp_dir is dropped
+}
+
+#[tokio::test]
+#[traced_test]
+#[cfg(any(unix, windows))]
+async fn test_lsp_rename_without_prepare() {
+    // Create a temporary directory and file
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let temp_file_path = temp_dir.path().join("test_main.go");
+
+    // Create a Go file with code that gopls can analyze
+    let go_content = include_str!("testdata/main.go");
+    fs::write(&temp_file_path, go_content).expect("Failed to write temp Go file");
+
+    let ipc_path = generate_random_ipc_path();
+    let child = setup_neovim_instance_ipc_advance(
+        &ipc_path,
+        get_testdata_path("cfg_lsp.lua").to_str().unwrap(),
+        temp_file_path.to_str().unwrap(),
+    )
+    .await;
+    let _guard = NeovimIpcGuard::new(child, ipc_path.clone());
+    let mut client = NeovimClient::new();
+
+    // Connect to instance
+    let result = client.connect_path(&ipc_path).await;
+    assert!(result.is_ok(), "Failed to connect to instance");
+
+    // Set up diagnostics and wait for LSP
+    let result = client.setup_diagnostics_changed_autocmd().await;
+    assert!(
+        result.is_ok(),
+        "Failed to setup diagnostics autocmd: {result:?}"
+    );
+
+    sleep(Duration::from_secs(20)).await; // Allow time for LSP to initialize
+
+    // Get LSP clients
+    let lsp_clients = client.lsp_get_clients().await.unwrap();
+    let gopls_client = lsp_clients
+        .iter()
+        .find(|c| c.name == "gopls")
+        .expect("gopls client should be available");
+
+    info!("Found gopls client: {:?}", gopls_client);
+
+    // Try to rename the Greet function to SayHello WITHOUT prepare rename (line 6, character 5)
+    let document = DocumentIdentifier::AbsolutePath(temp_file_path.clone());
+    let position = Position {
+        line: 6,      // Greet function definition line (0-indexed)
+        character: 5, // Position of "Greet" function name
+    };
+
+    info!("Testing rename of Greet function to SayHello (without prepare)...");
+    let rename_result = client
+        .lsp_rename("gopls", document, position, "SayHello")
+        .await;
+
+    info!("Rename result: {:?}", rename_result);
+
+    if let Ok(Some(workspace_edit)) = rename_result {
+        info!("✅ LSP rename successful!");
+        info!("Workspace edit: {:?}", workspace_edit);
+
+        // Apply the workspace edit to test the functionality
+        info!("Applying workspace edit...");
+        let apply_result = client
+            .lsp_apply_workspace_edit("gopls", workspace_edit)
+            .await;
+
+        assert!(
+            apply_result.is_ok(),
+            "Failed to apply workspace edit: {:?}",
+            apply_result
+        );
+        info!("✅ LSP workspace edit applied successfully!");
+
+        // Save the buffer to persist changes to disk
+        let result = client.execute_lua("vim.cmd('write')").await;
+        assert!(result.is_ok(), "Failed to save buffer: {result:?}");
+
+        // Give some time for the save operation to complete
+        sleep(Duration::from_millis(1000)).await;
+
+        // Read the file content to verify the rename was applied
+        let updated_content =
+            fs::read_to_string(&temp_file_path).expect("Failed to read updated file");
+        info!("Updated content:\n{}", updated_content);
+
+        // The function name should have been changed from "Greet" to "SayHello"
+        assert!(
+            updated_content.contains("SayHello"),
+            "File should contain the new function name 'SayHello'"
+        );
+        assert!(
+            !updated_content.contains("func Greet("),
+            "File should no longer contain the old function signature 'func Greet('"
+        );
+    } else {
+        info!("⚠️ LSP rename not supported or position not renameable");
+    }
+
+    // Temp directory and file automatically cleaned up when temp_dir is dropped
+}
