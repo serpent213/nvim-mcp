@@ -4,7 +4,7 @@
 
 ### Tools
 
-The server provides 18 MCP tools for interacting with Neovim instances:
+The server provides 19 MCP tools for interacting with Neovim instances:
 
 #### Connection Management
 
@@ -173,6 +173,19 @@ All tools below require a `connection_id` parameter from connection establishmen
   - **Usage**: Find interface/abstract class implementations with universal
     document identification for enhanced code navigation
 
+- **`lsp_declaration`**: Get LSP declaration with universal document identification
+  - **Parameters**:
+    - `connection_id` (string): Target Neovim instance ID
+    - `document` (DocumentIdentifier): Universal document identifier
+      (BufferId, ProjectRelativePath, or AbsolutePath)
+    - `lsp_client_name` (string): LSP client name from lsp_clients
+    - `line` (number): Symbol position line (0-indexed)
+    - `character` (number): Symbol position character (0-indexed)
+  - **Returns**: Declaration result supporting Location arrays, LocationLink
+    arrays, or null responses
+  - **Usage**: Find symbol declarations with universal document identification
+    for enhanced code navigation
+
 ### Resources
 
 ### Universal Document Identifier System
@@ -193,7 +206,8 @@ This system enables LSP operations on files that may not be open in Neovim buffe
 providing enhanced flexibility for code analysis and navigation. The universal LSP
 tools (`lsp_code_actions`, `lsp_hover`, `lsp_document_symbols`,
 `lsp_references`, `lsp_definition`, `lsp_type_definition`,
-`lsp_implementations`) accept any of these document identifier types.
+`lsp_implementations`, `lsp_declaration`) accept any of these document identifier
+types.
 
 ### MCP Resources
 

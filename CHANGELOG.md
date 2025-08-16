@@ -10,6 +10,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### New Features
+
+- **LSP Declaration Support**: Added `lsp_declaration` tool for finding symbol
+  declarations with universal document identification
+
+### New Tools (1 additional, 19 total)
+
+**Enhanced LSP Integration:**
+
+- `lsp_declaration` - Get LSP declaration with universal document identification
+  (buffer IDs, project paths, absolute paths)
+
 ## [v0.3.0] - 2025-08-15
 
 ### New Features
