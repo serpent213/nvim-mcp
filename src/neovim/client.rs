@@ -176,6 +176,13 @@ pub trait NeovimClientTrait: Sync {
         document: DocumentIdentifier,
         text_edits: Vec<TextEdit>,
     ) -> Result<(), NeovimError>;
+
+    /// Navigate to file and jump to line
+    async fn navigate_to_file(
+        &self,
+        document: DocumentIdentifier,
+        line: u64,
+    ) -> Result<String, NeovimError>;
 }
 
 pub struct NeovimHandler<T> {
@@ -2398,6 +2405,49 @@ where
             Err(e) => {
                 debug!("Failed to apply text edits: {}", e);
                 Err(NeovimError::Api(format!("Failed to apply text edits: {e}")))
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn navigate_to_file(
+        &self,
+        document: DocumentIdentifier,
+        line: u64,
+    ) -> Result<String, NeovimError> {
+        let conn = self
+            .connection
+            .as_ref()
+            .ok_or_else(|| NeovimError::Connection("No active connection available".to_string()))?;
+
+        match conn
+            .nvim
+            .execute_lua(
+                include_str!("lua/navigate_to_file.lua"),
+                vec![
+                    Value::from(serde_json::to_string(&document).map_err(|e| {
+                        NeovimError::Api(format!("Failed to serialize document identifier: {e}"))
+                    })?),
+                    Value::from(line),
+                ],
+            )
+            .await
+        {
+            Ok(result) => {
+                match serde_json::from_str::<NvimExecuteLuaResult<String>>(result.as_str().unwrap())
+                {
+                    Ok(rv) => rv.into(),
+                    Err(e) => {
+                        debug!("Failed to parse navigate to file result: {}", e);
+                        Err(NeovimError::Api(format!(
+                            "Failed to parse navigate to file result: {e}"
+                        )))
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Failed to navigate to file: {}", e);
+                Err(NeovimError::Api(format!("Failed to navigate to file: {e}")))
             }
         }
     }

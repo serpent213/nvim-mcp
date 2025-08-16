@@ -229,6 +229,20 @@ pub struct ApplyWorkspaceEditParams {
     pub workspace_edit: WorkspaceEdit,
 }
 
+/// Navigate to file parameters
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct NavigateToFileParams {
+    /// Unique identifier for the target Neovim instance
+    pub connection_id: String,
+    /// Universal document identifier
+    // Supports both string and struct deserialization.
+    // Compatible with Claude Code when using subscription.
+    #[serde(deserialize_with = "string_or_struct")]
+    pub document: DocumentIdentifier,
+    /// Line number to jump to (1-indexed, defaults to 1)
+    pub line: Option<u64>,
+}
+
 /// Rename parameters
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RenameParams {
@@ -916,6 +930,24 @@ impl NeovimMcpServer {
                 None,
             ))
         }
+    }
+
+    #[tool(
+        description = "Navigate to file and jump to line with universal document identification"
+    )]
+    #[instrument(skip(self))]
+    pub async fn navigate_to_file(
+        &self,
+        Parameters(NavigateToFileParams {
+            connection_id,
+            document,
+            line,
+        }): Parameters<NavigateToFileParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let client = self.get_connection(&connection_id)?;
+        let line_number = line.unwrap_or(1);
+        let result = client.navigate_to_file(document, line_number).await?;
+        Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 }
 
