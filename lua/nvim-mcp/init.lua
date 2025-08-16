@@ -33,7 +33,8 @@ local function generate_pipe_path()
 
     local escaped_path = escape_path(git_root)
     local pid = vim.fn.getpid()
-    local temp_dir = vim.fn.has("win32") == 1 and os.getenv("TEMP") or "/tmp"
+    local temp_dir = vim.fn.has("win32") == 1 and os.getenv("TEMP") or (os.getenv("HOME") .. "/.cache/nvim/rpc")
+    vim.fn.mkdir(temp_dir, "p")
 
     return string.format("%s/nvim-mcp.%s.%d.sock", temp_dir, escaped_path, pid)
 end
