@@ -25,3 +25,10 @@ vim.lsp.config["zls"] = {
     root_markers = { ".root" },
 }
 vim.lsp.enable("zls")
+
+vim.lsp.config["ts_ls"] = {
+    cmd = { "typescript-language-server", "--stdio" },
+    filetypes = { "typescript", "typescriptreact", "typescript.tsx" },
+    root_markers = { ".root" },
+}
+vim.lsp.enable("ts_ls")

@@ -275,6 +275,33 @@ pub struct DocumentFormattingParams {
     pub apply_edits: bool,
 }
 
+/// Document range formatting parameters
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct DocumentRangeFormattingParams {
+    /// Unique identifier for the target Neovim instance
+    pub connection_id: String,
+    /// Universal document identifier
+    // Supports both string and struct deserialization.
+    // Compatible with Claude Code when using subscription.
+    #[serde(deserialize_with = "string_or_struct")]
+    pub document: DocumentIdentifier,
+    /// Lsp client name
+    pub lsp_client_name: String,
+    /// Range start position, line number starts from 0
+    pub start_line: u64,
+    /// Range start position, character number starts from 0
+    pub start_character: u64,
+    /// Range end position, line number starts from 0
+    pub end_line: u64,
+    /// Range end position, character number starts from 0
+    pub end_character: u64,
+    /// The formatting options
+    pub options: FormattingOptions,
+    /// Whether to apply the text edits automatically (default: false)
+    #[serde(default)]
+    pub apply_edits: bool,
+}
+
 #[tool_router]
 impl NeovimMcpServer {
     #[tool(description = "Get available Neovim targets")]
@@ -759,6 +786,53 @@ impl NeovimMcpServer {
                 .await?;
             Ok(CallToolResult::success(vec![Content::text(
                 "Formatting applied successfully",
+            )]))
+        } else {
+            // Return the text edits for inspection
+            Ok(CallToolResult::success(vec![Content::json(text_edits)?]))
+        }
+    }
+
+    #[tool(
+        description = "Format a specific range in a document using LSP with optional auto-apply"
+    )]
+    #[instrument(skip(self))]
+    pub async fn lsp_range_formatting(
+        &self,
+        Parameters(DocumentRangeFormattingParams {
+            connection_id,
+            document,
+            lsp_client_name,
+            start_line,
+            start_character,
+            end_line,
+            end_character,
+            options,
+            apply_edits,
+        }): Parameters<DocumentRangeFormattingParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let client = self.get_connection(&connection_id)?;
+        let start = Position {
+            line: start_line,
+            character: start_character,
+        };
+        let end = Position {
+            line: end_line,
+            character: end_character,
+        };
+        let range = Range { start, end };
+
+        let text_edits = client
+            .lsp_range_formatting(&lsp_client_name, document.clone(), range, options)
+            .await?;
+
+        if apply_edits {
+            // Apply the text edits automatically
+            client
+                .lsp_apply_text_edits(&lsp_client_name, document, text_edits)
+                .await?;
+            Ok(CallToolResult::success(vec![Content::text(
+                "Range formatting applied successfully",
             )]))
         } else {
             // Return the text edits for inspection
