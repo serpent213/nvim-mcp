@@ -268,6 +268,16 @@ providing enhanced flexibility for code analysis and navigation.
 - **`exec_lua`**: Execute Lua code in Neovim
   - Parameters: `connection_id` (string), `code` (string) - Lua code to execute
 
+#### File Navigation
+
+- **`navigate_to_file`**: Navigate to file and jump to line with universal
+  document identification
+  - Parameters: `connection_id` (string), `document` (DocumentIdentifier),
+    `line` (number, optional) - Line number to jump to (1-indexed, defaults to 1)
+  - Intelligently switches to existing buffer if file is already open,
+    otherwise uses `:edit`
+  - Centers the view after jumping to the specified line
+
 ### Complete LSP Code Action Workflow
 
 The server now supports the full LSP code action lifecycle:

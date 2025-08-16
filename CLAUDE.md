@@ -200,6 +200,8 @@ The server provides these 23 tools (implemented with `#[tool]` attribute):
 18. **`lsp_range_formatting`**: Format a specific range in a document using LSP
 19. **`lsp_organize_imports`**: Sort and organize imports using LSP with
     auto-apply by default
+20. **`navigate_to_file`**: Navigate to file and jump to line with universal
+    document identification
 
 ### Universal Document Identifier System
 
@@ -220,8 +222,8 @@ enhanced flexibility for code analysis and navigation. The universal LSP tools
 (`lsp_code_actions`, `lsp_hover`, `lsp_document_symbols`, `lsp_references`,
 `lsp_definition`, `lsp_type_definition`, `lsp_implementations`,
 `lsp_declaration`, `lsp_rename`, `lsp_formatting`, `lsp_range_formatting`,
-`lsp_organize_imports`) accept any of these
-document identifier types.
+`lsp_organize_imports`) and the file navigation tool (`navigate_to_file`)
+accept any of these document identifier types.
 
 ### MCP Resources
 
