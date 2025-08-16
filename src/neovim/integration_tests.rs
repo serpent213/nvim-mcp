@@ -626,25 +626,29 @@ func main() {
 async fn test_lsp_declaration() {
     // Create a temporary directory and file
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let temp_file_path = temp_dir.path().join("test_declaration.go");
+    let temp_file_path = temp_dir.path().join("test_declaration.zig");
 
-    // Create a Go file with a function declaration and call
-    let go_content = r#"package main
+    // Create a Zig file with a function declaration and call
+    let zig_content = r#"const std = @import("std");
 
-import "fmt"
-
-func sayHello(name string) string {
-    return "Hello, " + name
+fn sayHello(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
+    return std.fmt.allocPrint(allocator, "Hello, {s}!", .{name});
 }
 
-func main() {
-    message := sayHello("World")
-    fmt.Println(message)
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const message = try sayHello(allocator, "World");
+    defer allocator.free(message);
+
+    std.debug.print("{s}\n", .{message});
 }
 "#;
-    fs::write(&temp_file_path, go_content).expect("Failed to write Go file");
+    fs::write(&temp_file_path, zig_content).expect("Failed to write Zig file");
 
-    // Setup Neovim with gopls
+    // Setup Neovim with zls (Zig Language Server)
     let ipc_path = generate_random_ipc_path();
     let child = setup_neovim_instance_ipc_advance(
         &ipc_path,
@@ -674,15 +678,15 @@ func main() {
     info!("LSP clients: {:?}", lsp_clients);
     assert!(!lsp_clients.is_empty(), "No LSP clients found");
 
-    // Test declaration lookup for sayHello function call on line 10 (0-indexed)
+    // Test declaration lookup for sayHello function call on line 11 (0-indexed)
     // Position cursor on "sayHello" in the function call
     let result = client
         .lsp_declaration(
-            "gopls",
+            "zls",
             DocumentIdentifier::from_buffer_id(1), // First opened file
             Position {
-                line: 10,      // Line with sayHello call (updated for new file format)
-                character: 17, // Position on "sayHello"
+                line: 11,      // Line with sayHello call (updated for Zig file format)
+                character: 26, // Position on "sayHello"
             },
         )
         .await;
@@ -708,13 +712,13 @@ func main() {
             // For LocationLinks, we create a Location from the target info
             let link = &links[0];
             assert!(
-                link.target_uri.contains("test_declaration.go"),
+                link.target_uri.contains("test_declaration.zig"),
                 "Declaration should point to the same file"
             );
-            // The declaration should point to line 5 (0-indexed) where the function is declared
+            // The declaration should point to line 2 (0-indexed) where the function is declared
             assert_eq!(
-                link.target_range.start.line, 5,
-                "Declaration should point to line 5 where sayHello function is declared"
+                link.target_range.start.line, 2,
+                "Declaration should point to line 2 where sayHello function is declared"
             );
             info!("✅ LSP declaration lookup successful!");
             // Temp directory and file automatically cleaned up when temp_dir is dropped
@@ -724,12 +728,12 @@ func main() {
 
     // For regular Locations, verify the declaration points to the function declaration
     assert!(
-        first_location.uri.contains("test_declaration.go"),
+        first_location.uri.contains("test_declaration.zig"),
         "Declaration should point to the same file"
     );
     assert_eq!(
-        first_location.range.start.line, 5,
-        "Declaration should point to line 5 where sayHello function is declared"
+        first_location.range.start.line, 2,
+        "Declaration should point to line 2 where sayHello function is declared"
     );
 
     info!("✅ LSP declaration lookup successful!");

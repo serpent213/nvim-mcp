@@ -18,3 +18,10 @@ vim.lsp.config["gopls"] = {
     root_markers = { ".root" },
 }
 vim.lsp.enable("gopls")
+
+vim.lsp.config["zls"] = {
+    cmd = { "zls" },
+    filetypes = { "zig" },
+    root_markers = { ".root" },
+}
+vim.lsp.enable("zls")
