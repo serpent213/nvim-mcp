@@ -7,7 +7,7 @@ with code in this repository.
 
 This is a Rust-based Model Context Protocol (MCP) server that provides AI
 assistants with programmatic access to Neovim instances. The server supports
-both Unix socket/named pipe and TCP connections, implements 21 core MCP
+both Unix socket/named pipe and TCP connections, implements 23 core MCP
 tools for Neovim interaction, and provides diagnostic resources through the
 `nvim-diagnostics://` URI scheme. The project uses Rust 2024 edition and
 focuses on async/concurrent operations with proper error handling throughout.
@@ -78,7 +78,7 @@ The codebase follows a modular architecture with clear separation of concerns:
   - Error conversion between `NeovimError` and `McpError`
 
 - **`src/server/tools.rs`**: MCP tool implementations
-  - Implements 21 MCP tools using the `#[tool]` attribute
+  - Implements 23 MCP tools using the `#[tool]` attribute
   - Contains parameter structs for tool requests
   - Focuses purely on MCP tool logic and protocol implementation
   - Clean separation from core infrastructure
@@ -161,7 +161,7 @@ This modular architecture provides several advantages:
 
 ### Available MCP Tools
 
-The server provides these 22 tools (implemented with `#[tool]` attribute):
+The server provides these 23 tools (implemented with `#[tool]` attribute):
 
 **Connection Management:**
 
@@ -198,6 +198,8 @@ The server provides these 22 tools (implemented with `#[tool]` attribute):
 16. **`lsp_rename`**: Rename symbol across workspace using LSP
 17. **`lsp_formatting`**: Format document using LSP with optional auto-apply
 18. **`lsp_range_formatting`**: Format a specific range in a document using LSP
+19. **`lsp_organize_imports`**: Sort and organize imports using LSP with
+    auto-apply by default
 
 ### Universal Document Identifier System
 
@@ -217,8 +219,8 @@ buffers, providing
 enhanced flexibility for code analysis and navigation. The universal LSP tools
 (`lsp_code_actions`, `lsp_hover`, `lsp_document_symbols`, `lsp_references`,
 `lsp_definition`, `lsp_type_definition`, `lsp_implementations`,
-`lsp_declaration`, `lsp_rename`, `lsp_formatting`, `lsp_range_formatting`) accept
-any of these
+`lsp_declaration`, `lsp_rename`, `lsp_formatting`, `lsp_range_formatting`,
+`lsp_organize_imports`) accept any of these
 document identifier types.
 
 ### MCP Resources
