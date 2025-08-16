@@ -37,8 +37,11 @@ nix develop .
 - `--log-file <PATH>`: Log file path (defaults to stderr)
 - `--log-level <LEVEL>`: Log level (trace, debug, info, warn, error;
   defaults to info)
-- `--socket-path <PATH>`: Directory for socket files (defaults to
-  `$HOME/.cache/nvim/rpc` on Unix-like systems, `%TEMP%` on Windows)
+- `--socket-path <PATH>`: Flexible socket path configuration with three modes:
+  - **Existing directory**: Search for `nvim-mcp.*.sock` files (default behavior)
+  - **Existing file**: Locked mode with auto-connection to single Neovim instance
+  - **Non-existent path**: Treat as glob pattern for socket file discovery
+  - **Default**: `$HOME/.cache/nvim/rpc` on Unix-like systems, `%TEMP%` on Windows
 
 ### Testing
 
@@ -76,6 +79,8 @@ The codebase follows a modular architecture with clear separation of concerns:
   - Manages multiple concurrent connections via
     `Arc<DashMap<String, Box<dyn NeovimClientTrait + Send>>>`
   - Handles multi-connection lifecycle with deterministic connection IDs
+  - Implements three socket operation modes (Directory, SingleFile, GlobPattern)
+  - Auto-connection support for locked mode (single file) operation
   - Provides utility functions (BLAKE3 hashing, socket discovery, etc.)
   - Error conversion between `NeovimError` and `McpError`
 
@@ -124,6 +129,32 @@ This modular architecture provides several advantages:
 4. **Resource Access**: MCP resource request → diagnostic data retrieval →
    structured JSON response
 
+### Socket Operation Modes
+
+The server supports three flexible socket operation modes via the
+`SocketGlobMode` enum:
+
+**Directory Mode (`SocketGlobMode::Directory`)**:
+
+- Default behavior when `--socket-path` points to an existing directory
+- Searches for `nvim-mcp.*.sock` files within the directory
+- Supports multiple Neovim instances discovery via `get_targets`
+- Requires manual `connect` workflow
+
+**Single File Mode (`SocketGlobMode::SingleFile`)**:
+
+- Activated when `--socket-path` points to an existing socket file
+- Enables "locked mode" operation with auto-connection on server startup
+- MCP clients can immediately use tools without manual connection steps
+- Connection ID is auto-generated and available via `nvim-connections://` resource
+
+**Glob Pattern Mode (`SocketGlobMode::GlobPattern`)**:
+
+- Used when `--socket-path` specifies a non-existent path (treated as glob pattern)
+- Re-evaluates pattern each time `get_targets` is called
+- Supports complex socket discovery scenarios (e.g., `/tmp/nvim-*.sock`)
+- Flexible pattern matching for various deployment configurations
+
 ### Connection Management
 
 - **Multi-connection support**: Multiple concurrent Neovim instances managed simultaneously
@@ -131,6 +162,7 @@ This modular architecture provides several advantages:
 - **Deterministic connection IDs** generated using BLAKE3 hash of target string
 - **Connection isolation**: Each connection operates independently with
   proper session isolation
+- **Auto-connection support**: Single file mode automatically connects on startup
 - **Proper cleanup** of TCP connections and background tasks on disconnect
 - **Connection validation** before tool execution using connection ID lookup
 
@@ -253,6 +285,7 @@ BLAKE3 hashes of the target string for consistent identification.
 - **`dashmap`**: Lock-free concurrent HashMap for connection storage
 - **`regex`**: Pattern matching for connection-scoped resource URI parsing
 - **`blake3`**: Fast, deterministic hashing for connection ID generation
+- **`glob`**: Pattern matching for flexible socket path discovery
 
 **Testing and Development Dependencies:**
 

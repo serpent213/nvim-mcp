@@ -11,10 +11,22 @@ pub enum ConfigError {
     InvalidPath(String),
 }
 
+/// Socket operation mode determined by the provided socket-path
+#[derive(Debug, Clone, PartialEq)]
+pub enum SocketGlobMode {
+    /// Path is an existing directory - search for nvim-mcp.*.sock files
+    Directory,
+    /// Path is an existing file - locked mode with single Neovim instance
+    SingleFile,
+    /// Path doesn't exist - treat as glob pattern to find files
+    GlobPattern,
+}
+
 /// Configuration for the Neovim MCP server
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub socket_path: PathBuf,
+    pub socket_mode: SocketGlobMode,
     pub log_file: Option<PathBuf>,
     pub log_level: String,
 }
@@ -26,34 +38,54 @@ impl ServerConfig {
         log_file: Option<PathBuf>,
         log_level: String,
     ) -> Result<Self, ConfigError> {
-        let socket_path = Self::resolve_socket_path(socket_path)?;
+        let (socket_path, socket_mode) = Self::resolve_socket_path_and_mode(socket_path)?;
 
         Ok(Self {
             socket_path,
+            socket_mode,
             log_file,
             log_level,
         })
     }
 
-    /// Resolve socket path from optional user input or platform defaults
-    pub fn resolve_socket_path(provided: Option<String>) -> Result<PathBuf, ConfigError> {
+    /// Resolve socket path and determine mode from optional user input or platform defaults
+    pub fn resolve_socket_path_and_mode(
+        provided: Option<String>,
+    ) -> Result<(PathBuf, SocketGlobMode), ConfigError> {
         match provided {
             Some(path) => {
-                let path_buf = PathBuf::from(path);
-                // Validate that parent directory exists or can be created
-                if let Some(parent) = path_buf.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| {
-                        ConfigError::Filesystem(format!(
-                            "Cannot create directory {}: {}",
-                            parent.display(),
-                            e
-                        ))
-                    })?;
+                let path_buf = PathBuf::from(&path);
+
+                if path_buf.exists() {
+                    if path_buf.is_dir() {
+                        // Existing directory - Directory mode
+                        Ok((path_buf, SocketGlobMode::Directory))
+                    } else if path_buf.is_file() {
+                        // Existing file - SingleFile mode (locked)
+                        Ok((path_buf, SocketGlobMode::SingleFile))
+                    } else {
+                        Err(ConfigError::InvalidPath(format!(
+                            "Path exists but is neither file nor directory: {}",
+                            path_buf.display()
+                        )))
+                    }
+                } else {
+                    // Path doesn't exist - treat as glob pattern
+                    Ok((path_buf, SocketGlobMode::GlobPattern))
                 }
-                Ok(path_buf)
             }
-            None => Self::default_socket_path(),
+            None => {
+                // Use default directory path
+                let default_path = Self::default_socket_path()?;
+                Ok((default_path, SocketGlobMode::Directory))
+            }
         }
+    }
+
+    /// Resolve socket path from optional user input or platform defaults
+    pub fn resolve_socket_path(provided: Option<String>) -> Result<PathBuf, ConfigError> {
+        let (path, _mode) = Self::resolve_socket_path_and_mode(provided)?;
+        Ok(path)
     }
 
     /// Get platform-specific default socket directory

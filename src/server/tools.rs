@@ -234,7 +234,7 @@ impl NeovimMcpServer {
     #[tool(description = "Get available Neovim targets")]
     #[instrument(skip(self))]
     pub async fn get_targets(&self) -> Result<CallToolResult, McpError> {
-        let targets = super::core::find_get_all_targets(&self.socket_path);
+        let targets = super::core::find_get_all_targets(&self.socket_path, &self.socket_mode);
         if targets.is_empty() {
             return Err(McpError::invalid_request(
                 "No Neovim targets found".to_string(),

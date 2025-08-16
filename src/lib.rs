@@ -8,7 +8,7 @@ pub mod test_utils;
 #[cfg(test)]
 mod config_test;
 
-pub use config::{ConfigError, ServerConfig};
+pub use config::{ConfigError, ServerConfig, SocketGlobMode};
 pub use server::NeovimMcpServer;
 
 pub type Result<T> = std::result::Result<T, ServerError>;

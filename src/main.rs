@@ -89,10 +89,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e: ConfigError| format!("Configuration error: {}", e))?;
 
     info!(
-        "Starting nvim-mcp Neovim server with socket_path: {}",
-        config.socket_path.display()
+        "Starting nvim-mcp Neovim server with socket_path: {}, mode: {:?}",
+        config.socket_path.display(),
+        config.socket_mode
     );
-    let server = NeovimMcpServer::new(config.socket_path);
+    let server = NeovimMcpServer::new(config.socket_path, config.socket_mode.clone());
+
+    // Initialize auto-connection for locked mode
+    if let Err(e) = server.initialize_auto_connection().await {
+        info!("Auto-connection failed (not critical): {}", e);
+    }
+
     let service = server.serve(stdio()).await.inspect_err(|e| {
         error!("Error starting Neovim server: {}", e);
     })?;

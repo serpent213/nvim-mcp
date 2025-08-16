@@ -56,8 +56,11 @@ nvim-mcp --log-file ./nvim-mcp.log --log-level debug
 - `--log-file <PATH>`: Path to log file (defaults to stderr)
 - `--log-level <LEVEL>`: Log level (trace, debug, info, warn, error;
   defaults to info)
-- `--socket-path <PATH>`: Directory for socket files (defaults to
-  `$HOME/.cache/nvim/rpc` on Unix-like systems, `%TEMP%` on Windows)
+- `--socket-path <PATH>`: Flexible socket path configuration:
+  - **Existing directory**: Search for `nvim-mcp.*.sock` files (default behavior)
+  - **Existing file**: Locked mode - auto-connect to single Neovim instance
+  - **Non-existent path**: Treat as glob pattern to find socket files
+  - **Default**: `$HOME/.cache/nvim/rpc` on Unix-like systems, `%TEMP%` on Windows
 
 ### 2. Setup Neovim Integration
 
@@ -95,11 +98,51 @@ Or add to your Neovim config:
 vim.fn.serverstart("127.0.0.1:6666")
 ```
 
-### 3. Basic Usage Workflow
+### 3. Socket Path Configuration Modes
+
+The `--socket-path` option supports three flexible modes:
+
+#### Directory Mode (Default)
+
+```bash
+# Use existing directory to search for nvim-mcp.*.sock files
+nvim-mcp --socket-path ~/.cache/nvim/rpc
+```
+
+- Searches for socket files created by the nvim-mcp plugin
+- Supports multiple Neovim instances
+- Requires `get_targets` → `connect` workflow
+
+#### Locked Mode (Single File)
+
+```bash
+# Point directly to an existing socket file
+nvim-mcp --socket-path ~/.cache/nvim/rpc/nvim-mcp.abc123.sock
+```
+
+- Auto-connects to the specified Neovim instance on startup
+- MCP client can immediately use tools without manual connection
+- Tools like `get_targets` and `connect` are not needed
+
+#### Glob Pattern Mode
+
+```bash
+# Use glob patterns to find socket files
+nvim-mcp --socket-path "/tmp/nvim-*.sock"
+nvim-mcp --socket-path "~/.cache/nvim/*/nvim-mcp.*.sock"
+```
+
+- Evaluates glob pattern to find matching socket files
+- Pattern is re-evaluated when `get_targets` is called
+- Useful for complex socket discovery scenarios
+
+### 4. Basic Usage Workflow
 
 Once both the MCP server and Neovim are running, here's a typical workflow:
 
 #### Using Unix Socket (Recommended)
+
+**For Directory/Glob Pattern Modes:**
 
 1. **Discover available Neovim instances**:
    - Use `get_targets` tool to list available socket paths
@@ -113,6 +156,16 @@ Once both the MCP server and Neovim are running, here's a typical workflow:
      `nvim-diagnostics://{connection_id}/workspace`
 4. **Optional cleanup**:
    - Use `disconnect` tool when completely done
+
+**For Locked Mode (Single File):**
+
+1. **Start server with specific socket file**:
+   - Server auto-connects to the specified Neovim instance
+2. **Use tools immediately**:
+   - Get `connection_id` from `nvim-connections://` resource or use any tool
+   - All connection-aware tools work with the auto-connected instance
+3. **No manual connection needed**:
+   - Skip `get_targets` and `connect` steps entirely
 
 #### Using TCP Connection
 
