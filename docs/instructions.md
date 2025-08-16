@@ -4,7 +4,7 @@
 
 ### Tools
 
-The server provides 21 MCP tools for interacting with Neovim instances:
+The server provides 22 MCP tools for interacting with Neovim instances:
 
 #### Connection Management
 
@@ -207,12 +207,32 @@ All tools below require a `connection_id` parameter from connection establishmen
     - `document` (DocumentIdentifier): Universal document identifier
       (BufferId, ProjectRelativePath, or AbsolutePath)
     - `lsp_client_name` (string): LSP client name from lsp_clients
-    - `formatting_options` (FormattingOptions, optional): LSP formatting preferences
-    - `auto_apply` (boolean, optional): Whether to automatically apply formatting
+    - `options` (FormattingOptions): LSP formatting preferences
+    - `apply_edits` (boolean, optional): Whether to automatically apply formatting
       changes (default: false)
   - **Returns**: Array of TextEdit objects or success confirmation if auto-applied
   - **Usage**: Format documents using LSP with support for LSP 3.15.0+ formatting
     preferences including tab size, insert final newline, trim trailing whitespace
+
+- **`lsp_range_formatting`**: Format a specific range in a document using LSP
+  - **Parameters**:
+    - `connection_id` (string): Target Neovim instance ID
+    - `document` (DocumentIdentifier): Universal document identifier
+      (BufferId, ProjectRelativePath, or AbsolutePath)
+    - `lsp_client_name` (string): LSP client name from lsp_clients
+    - `start_line` (number): Range start position, line number starts from 0
+    - `start_character` (number): Range start position, character number starts
+      from 0
+    - `end_line` (number): Range end position, line number starts from 0
+    - `end_character` (number): Range end position, character number starts
+      from 0
+    - `options` (FormattingOptions): LSP formatting preferences
+    - `apply_edits` (boolean, optional): Whether to automatically apply formatting
+      changes (default: false)
+  - **Returns**: Array of TextEdit objects or success confirmation if auto-applied
+  - **Usage**: Format a specific range in documents using LSP with support for
+    LSP 3.15.0+ formatting preferences including tab size, insert final newline,
+    trim trailing whitespace
 
 ### Resources
 
@@ -234,7 +254,8 @@ This system enables LSP operations on files that may not be open in Neovim buffe
 providing enhanced flexibility for code analysis and navigation. The universal LSP
 tools (`lsp_code_actions`, `lsp_hover`, `lsp_document_symbols`,
 `lsp_references`, `lsp_definition`, `lsp_type_definition`,
-`lsp_implementations`, `lsp_declaration`, `lsp_rename`, `lsp_formatting`) accept
+`lsp_implementations`, `lsp_declaration`, `lsp_rename`, `lsp_formatting`,
+`lsp_range_formatting`) accept
 any of these
 document identifier types.
 
