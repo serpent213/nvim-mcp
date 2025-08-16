@@ -67,6 +67,8 @@
               lua-language-server
               go
               gopls
+              zig
+              zls
             ];
             shellHook = ''
               # Unset SOURCE_DATE_EPOCH to prevent reproducible build timestamps during development.
