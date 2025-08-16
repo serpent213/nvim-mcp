@@ -1039,9 +1039,11 @@ async fn test_lsp_organize_imports_with_lsp() -> Result<(), Box<dyn std::error::
     let _guard = setup_neovim_instance_ipc_advance(
         &ipc_path,
         get_testdata_path("cfg_lsp.lua").to_str().unwrap(),
-        get_testdata_path("organize_imports.go").to_str().unwrap(),
+        get_testdata_path("main.go").to_str().unwrap(),
     )
     .await;
+
+    time::sleep(Duration::from_secs(1)).await; // Ensure LSP is ready
 
     // Establish connection
     let connection_id = {
