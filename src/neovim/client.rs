@@ -144,6 +144,22 @@ pub trait NeovimClientTrait: Sync {
         position: Position,
         new_name: &str,
     ) -> Result<Option<WorkspaceEdit>, NeovimError>;
+
+    /// Format document using LSP
+    async fn lsp_formatting(
+        &self,
+        client_name: &str,
+        document: DocumentIdentifier,
+        options: FormattingOptions,
+    ) -> Result<Vec<TextEdit>, NeovimError>;
+
+    /// Apply text edits to a document
+    async fn lsp_apply_text_edits(
+        &self,
+        client_name: &str,
+        document: DocumentIdentifier,
+        text_edits: Vec<TextEdit>,
+    ) -> Result<(), NeovimError>;
 }
 
 pub struct NeovimHandler<T> {
@@ -544,6 +560,28 @@ pub struct WorkspaceEdit {
 }
 
 impl_fromstr_serde_json!(WorkspaceEdit);
+
+/// Formatting options for LSP document formatting
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FormattingOptions {
+    /// Size of a tab in spaces
+    pub tab_size: u32,
+    /// Prefer spaces over tabs
+    pub insert_spaces: bool,
+    /// Trim trailing whitespace on a line (since LSP 3.15.0)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trim_trailing_whitespace: Option<bool>,
+    /// Insert a newline character at the end of the file if one does not exist (since LSP 3.15.0)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub insert_final_newline: Option<bool>,
+    /// Trim all newlines after the final newline at the end of the file (since LSP 3.15.0)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trim_final_newlines: Option<bool>,
+    /// For further properties.
+    #[serde(flatten)]
+    pub extras: HashMap<String, serde_json::Value>,
+}
 
 #[derive(Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 pub struct Command {
@@ -2110,6 +2148,111 @@ where
             Err(e) => {
                 debug!("Failed to rename: {}", e);
                 Err(NeovimError::Api(format!("Failed to rename: {e}")))
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn lsp_formatting(
+        &self,
+        client_name: &str,
+        document: DocumentIdentifier,
+        options: FormattingOptions,
+    ) -> Result<Vec<TextEdit>, NeovimError> {
+        let text_document = self.resolve_text_document_identifier(&document).await?;
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        #[derive(serde::Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct DocumentFormattingRequest {
+            text_document: TextDocumentIdentifier,
+            options: FormattingOptions,
+        }
+
+        match conn
+            .nvim
+            .execute_lua(
+                include_str!("lua/lsp_formatting.lua"),
+                vec![
+                    Value::from(client_name), // client_name
+                    Value::from(
+                        serde_json::to_string(&DocumentFormattingRequest {
+                            text_document,
+                            options,
+                        })
+                        .unwrap(),
+                    ),
+                    Value::from(1000), // timeout_ms
+                ],
+            )
+            .await
+        {
+            Ok(result) => {
+                match serde_json::from_str::<NvimExecuteLuaResult<Option<Vec<TextEdit>>>>(
+                    result.as_str().unwrap(),
+                ) {
+                    Ok(d) => {
+                        let rv: Result<Option<Vec<TextEdit>>, NeovimError> = d.into();
+                        rv.map(|x| x.unwrap_or_default())
+                    }
+                    Err(e) => {
+                        debug!("Failed to parse formatting result: {e}");
+                        Err(NeovimError::Api(format!(
+                            "Failed to parse formatting result: {e}"
+                        )))
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Failed to format document: {}", e);
+                Err(NeovimError::Api(format!("Failed to format document: {e}")))
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn lsp_apply_text_edits(
+        &self,
+        client_name: &str,
+        document: DocumentIdentifier,
+        text_edits: Vec<TextEdit>,
+    ) -> Result<(), NeovimError> {
+        let text_document = self.resolve_text_document_identifier(&document).await?;
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        match conn
+            .nvim
+            .execute_lua(
+                include_str!("lua/lsp_apply_text_edits.lua"),
+                vec![
+                    Value::from(client_name),
+                    Value::from(serde_json::to_string(&text_edits).map_err(|e| {
+                        NeovimError::Api(format!("Failed to serialize text edits: {e}"))
+                    })?),
+                    Value::from(text_document.uri),
+                ],
+            )
+            .await
+        {
+            Ok(result) => {
+                match serde_json::from_str::<NvimExecuteLuaResult<()>>(result.as_str().unwrap()) {
+                    Ok(rv) => rv.into(),
+                    Err(e) => {
+                        debug!("Failed to parse apply text edits result: {}", e);
+                        Err(NeovimError::Api(format!(
+                            "Failed to parse apply text edits result: {e}"
+                        )))
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Failed to apply text edits: {}", e);
+                Err(NeovimError::Api(format!("Failed to apply text edits: {e}")))
             }
         }
     }

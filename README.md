@@ -121,7 +121,7 @@ Once both the MCP server and Neovim are running, here's a typical workflow:
 
 ## Available Tools
 
-The server provides 20 MCP tools for interacting with Neovim:
+The server provides 21 MCP tools for interacting with Neovim:
 
 ### Connection Management
 
@@ -223,6 +223,14 @@ establishment phase:
     `new_name` (string), `prepare_first` (boolean, optional)
     (all positions are 0-indexed)
   - Returns: WorkspaceEdit with file changes or validation errors
+
+- **`lsp_formatting`**: Format document using LSP
+  - Parameters: `connection_id` (string), `document` (DocumentIdentifier),
+    `lsp_client_name` (string), `formatting_options` (FormattingOptions, optional),
+    `auto_apply` (boolean, optional) (all positions are 0-indexed)
+  - Returns: Array of TextEdit objects or success confirmation if auto-applied
+  - Notes: Supports LSP 3.15.0+ formatting preferences including tab size,
+    insert final newline, trim trailing whitespace, etc.
 
 ### Universal Document Identifier
 

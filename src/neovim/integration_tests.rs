@@ -1079,7 +1079,7 @@ async fn test_lsp_rename_with_prepare() {
             "File should no longer contain the old function signature 'func Greet('"
         );
     } else {
-        info!("⚠️ LSP rename not supported or position not renameable");
+        panic!("⚠️ LSP rename not supported or position not renameable");
     }
 
     // Temp directory and file automatically cleaned up when temp_dir is dropped
@@ -1182,8 +1182,223 @@ async fn test_lsp_rename_without_prepare() {
             "File should no longer contain the old function signature 'func Greet('"
         );
     } else {
-        info!("⚠️ LSP rename not supported or position not renameable");
+        panic!("⚠️ LSP rename not supported or position not renameable");
     }
+
+    // Temp directory and file automatically cleaned up when temp_dir is dropped
+}
+
+// Helper function to set up Neovim instance with LSP for formatting tests
+async fn setup_formatting_test_helper() -> (
+    TempDir,
+    NeovimIpcGuard,
+    NeovimClient<tokio::net::UnixStream>,
+) {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let temp_file_path = temp_dir.path().join("test_formatting_split.go");
+    // Create a poorly formatted Go file that needs formatting
+    let unformatted_go_content = r#"package main
+import "fmt"
+import    "time"
+func main(){
+if true{
+fmt.Println("Hello World")
+}
+for i:=0;i<10;i++{
+fmt.Printf("Number: %d\n",i)
+}
+}
+func helper( x   int,y int)int{
+return x+y
+}
+"#;
+
+    fs::write(&temp_file_path, unformatted_go_content).expect("Failed to write temp Go file");
+
+    let ipc_path = generate_random_ipc_path();
+    let child = setup_neovim_instance_ipc_advance(
+        &ipc_path,
+        get_testdata_path("cfg_lsp.lua").to_str().unwrap(),
+        temp_file_path.to_str().unwrap(),
+    )
+    .await;
+    let guard = NeovimIpcGuard::new(child, ipc_path.clone());
+    let mut client = NeovimClient::new();
+
+    // Connect to instance
+    let result = client.connect_path(&ipc_path).await;
+    assert!(result.is_ok(), "Failed to connect to instance");
+
+    // Set up diagnostics and wait for LSP
+    let result = client.setup_diagnostics_changed_autocmd().await;
+    assert!(
+        result.is_ok(),
+        "Failed to setup diagnostics autocmd: {result:?}"
+    );
+
+    sleep(Duration::from_secs(20)).await; // Allow time for LSP to initialize
+
+    (temp_dir, guard, client)
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_lsp_formatting_and_apply_edits() {
+    let (_temp_dir, _guard, client) = setup_formatting_test_helper().await;
+
+    use crate::neovim::FormattingOptions;
+    let tab_options = FormattingOptions {
+        tab_size: 4,
+        insert_spaces: false,
+        trim_trailing_whitespace: Some(true),
+        insert_final_newline: Some(true),
+        trim_final_newlines: Some(false),
+        extras: std::collections::HashMap::new(),
+    };
+
+    // First get the text edits
+    let result = client
+        .lsp_formatting("gopls", DocumentIdentifier::from_buffer_id(0), tab_options)
+        .await;
+
+    assert!(result.is_ok(), "Failed to format with tabs: {result:?}");
+    let text_edits = result.unwrap();
+    assert!(!text_edits.is_empty(), "Should have text edits to apply");
+
+    // Apply the text edits
+    let apply_result = client
+        .lsp_apply_text_edits(
+            "gopls",
+            DocumentIdentifier::from_buffer_id(0),
+            text_edits.clone(),
+        )
+        .await;
+
+    assert!(
+        apply_result.is_ok(),
+        "Failed to apply text edits: {apply_result:?}"
+    );
+    info!(
+        "✅ Successfully applied {} text edits using lsp_apply_text_edits",
+        text_edits.len()
+    );
+
+    // Verify the buffer content changed by checking it
+    let content_check = client
+        .execute_lua(r#"return table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")"#)
+        .await;
+
+    assert!(
+        content_check.is_ok(),
+        "Failed to get buffer content after applying text edits: {content_check:?}"
+    );
+    info!("✅ Buffer content updated after applying text edits");
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_lsp_apply_text_edits() {
+    // Create a temporary directory and file
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let temp_file_path = temp_dir.path().join("test_apply_edits.go");
+
+    // Create a poorly formatted Go file that needs formatting
+    let unformatted_go_content = r#"package main
+import "fmt"
+func main(){
+fmt.Println("Hello World")
+}
+"#;
+    fs::write(&temp_file_path, unformatted_go_content).expect("Failed to write temp Go file");
+
+    let ipc_path = generate_random_ipc_path();
+    let child = setup_neovim_instance_ipc_advance(
+        &ipc_path,
+        get_testdata_path("cfg_lsp.lua").to_str().unwrap(),
+        temp_file_path.to_str().unwrap(),
+    )
+    .await;
+    let _guard = NeovimIpcGuard::new(child, ipc_path.clone());
+    let mut client = NeovimClient::new();
+
+    // Connect to instance
+    let result = client.connect_path(&ipc_path).await;
+    assert!(result.is_ok(), "Failed to connect to instance");
+
+    // Set up diagnostics and wait for LSP
+    let result = client.setup_diagnostics_changed_autocmd().await;
+    assert!(
+        result.is_ok(),
+        "Failed to setup diagnostics autocmd: {result:?}"
+    );
+
+    sleep(Duration::from_secs(20)).await; // Allow time for LSP to initialize
+
+    use crate::neovim::FormattingOptions;
+    let tab_options = FormattingOptions {
+        tab_size: 4,
+        insert_spaces: false,
+        trim_trailing_whitespace: Some(true),
+        insert_final_newline: Some(true),
+        trim_final_newlines: Some(false),
+        extras: std::collections::HashMap::new(),
+    };
+
+    // First get the original buffer content
+    let original_content = client
+        .execute_lua(r#"return table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")"#)
+        .await;
+
+    assert!(
+        original_content.is_ok(),
+        "Failed to get original buffer content: {original_content:?}"
+    );
+    let original = original_content.unwrap().as_str().unwrap().to_string();
+    info!("Original buffer content length: {}", original.len());
+
+    // Test 1: Get text edits first (without applying)
+    let text_edits_result = client
+        .lsp_formatting(
+            "gopls",
+            DocumentIdentifier::from_buffer_id(0),
+            tab_options.clone(),
+        )
+        .await;
+    assert!(
+        text_edits_result.is_ok(),
+        "Failed to get text edits for formatting: {text_edits_result:?}"
+    );
+
+    let text_edits = text_edits_result.unwrap();
+    info!("✅ Got {} text edits for formatting", text_edits.len());
+
+    // Test 2: Apply the text edits
+    let apply_result = client
+        .lsp_apply_text_edits("gopls", DocumentIdentifier::from_buffer_id(0), text_edits)
+        .await;
+
+    assert!(
+        apply_result.is_ok(),
+        "Failed to apply text edits: {apply_result:?}"
+    );
+    info!("✅ Successfully applied text edits");
+
+    // Test 3: Verify the buffer content changed
+    let new_content = client
+        .execute_lua(r#"return table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")"#)
+        .await;
+    assert!(
+        new_content.is_ok(),
+        "Failed to get new buffer content after applying text edits: {new_content:?}"
+    );
+    let new = new_content.unwrap().as_str().unwrap().to_string();
+    info!("New buffer content length: {}", new.len());
+
+    // The content should be different after formatting
+    assert_ne!(
+        original, new,
+        "Buffer content should have changed after applying text edits"
+    );
 
     // Temp directory and file automatically cleaned up when temp_dir is dropped
 }
