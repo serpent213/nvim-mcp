@@ -233,7 +233,7 @@ where
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct Diagnostic {
     pub message: String,
-    pub code: Option<String>,
+    pub code: Option<serde_json::Value>,
     pub severity: u8,
     pub lnum: u64,
     pub col: u64,
@@ -254,7 +254,7 @@ pub struct UserData {
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 pub struct LSPDiagnostic {
-    pub code: Option<String>,
+    pub code: Option<serde_json::Value>,
     pub message: String,
     pub range: Range,
     pub severity: u8,
