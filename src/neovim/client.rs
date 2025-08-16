@@ -153,6 +153,15 @@ pub trait NeovimClientTrait: Sync {
         options: FormattingOptions,
     ) -> Result<Vec<TextEdit>, NeovimError>;
 
+    /// Format document range using LSP
+    async fn lsp_range_formatting(
+        &self,
+        client_name: &str,
+        document: DocumentIdentifier,
+        range: Range,
+        options: FormattingOptions,
+    ) -> Result<Vec<TextEdit>, NeovimError>;
+
     /// Apply text edits to a document
     async fn lsp_apply_text_edits(
         &self,
@@ -2209,6 +2218,70 @@ where
             Err(e) => {
                 debug!("Failed to format document: {}", e);
                 Err(NeovimError::Api(format!("Failed to format document: {e}")))
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn lsp_range_formatting(
+        &self,
+        client_name: &str,
+        document: DocumentIdentifier,
+        range: Range,
+        options: FormattingOptions,
+    ) -> Result<Vec<TextEdit>, NeovimError> {
+        let text_document = self.resolve_text_document_identifier(&document).await?;
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        #[derive(serde::Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct DocumentRangeFormattingRequest {
+            text_document: TextDocumentIdentifier,
+            range: Range,
+            options: FormattingOptions,
+        }
+
+        match conn
+            .nvim
+            .execute_lua(
+                include_str!("lua/lsp_range_formatting.lua"),
+                vec![
+                    Value::from(client_name), // client_name
+                    Value::from(
+                        serde_json::to_string(&DocumentRangeFormattingRequest {
+                            text_document,
+                            range,
+                            options,
+                        })
+                        .unwrap(),
+                    ),
+                    Value::from(1000), // timeout_ms
+                ],
+            )
+            .await
+        {
+            Ok(result) => {
+                match serde_json::from_str::<NvimExecuteLuaResult<Option<Vec<TextEdit>>>>(
+                    result.as_str().unwrap(),
+                ) {
+                    Ok(d) => {
+                        let rv: Result<Option<Vec<TextEdit>>, NeovimError> = d.into();
+                        rv.map(|x| x.unwrap_or_default())
+                    }
+                    Err(e) => {
+                        debug!("Failed to parse range formatting result: {e}");
+                        Err(NeovimError::Api(format!(
+                            "Failed to parse range formatting result: {e}"
+                        )))
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Failed to format range: {}", e);
+                Err(NeovimError::Api(format!("Failed to format range: {e}")))
             }
         }
     }

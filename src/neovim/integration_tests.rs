@@ -1195,25 +1195,40 @@ async fn setup_formatting_test_helper() -> (
     NeovimClient<tokio::net::UnixStream>,
 ) {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let temp_file_path = temp_dir.path().join("test_formatting_split.go");
-    // Create a poorly formatted Go file that needs formatting
-    let unformatted_go_content = r#"package main
-import "fmt"
-import    "time"
-func main(){
-if true{
-fmt.Println("Hello World")
+    let temp_file_path = temp_dir.path().join("test_formatting_split.ts");
+    // Create a poorly formatted TypeScript file that needs formatting
+    let unformatted_ts_content = r#"import {Console} from 'console';
+import    * as fs from 'fs';
+
+interface User{
+name:string;
+age:number;
 }
-for i:=0;i<10;i++{
-fmt.Printf("Number: %d\n",i)
+
+class UserService{
+constructor(private users:User[]=[]){}
+
+addUser(user:User):void{
+this.users.push(user);
+}
+
+getUsers():User[]{
+return this.users;
 }
 }
-func helper( x   int,y int)int{
-return x+y
+
+function main(){
+const service=new UserService();
+const user:User={name:"Alice",age:30};
+service.addUser(user);
+console.log(service.getUsers());
 }
+
+main();
 "#;
 
-    fs::write(&temp_file_path, unformatted_go_content).expect("Failed to write temp Go file");
+    fs::write(&temp_file_path, unformatted_ts_content)
+        .expect("Failed to write temp TypeScript file");
 
     let ipc_path = generate_random_ipc_path();
     let child = setup_neovim_instance_ipc_advance(
@@ -1258,7 +1273,7 @@ async fn test_lsp_formatting_and_apply_edits() {
 
     // First get the text edits
     let result = client
-        .lsp_formatting("gopls", DocumentIdentifier::from_buffer_id(0), tab_options)
+        .lsp_formatting("ts_ls", DocumentIdentifier::from_buffer_id(0), tab_options)
         .await;
 
     assert!(result.is_ok(), "Failed to format with tabs: {result:?}");
@@ -1268,7 +1283,7 @@ async fn test_lsp_formatting_and_apply_edits() {
     // Apply the text edits
     let apply_result = client
         .lsp_apply_text_edits(
-            "gopls",
+            "ts_ls",
             DocumentIdentifier::from_buffer_id(0),
             text_edits.clone(),
         )
@@ -1300,16 +1315,17 @@ async fn test_lsp_formatting_and_apply_edits() {
 async fn test_lsp_apply_text_edits() {
     // Create a temporary directory and file
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let temp_file_path = temp_dir.path().join("test_apply_edits.go");
+    let temp_file_path = temp_dir.path().join("test_apply_edits.ts");
 
-    // Create a poorly formatted Go file that needs formatting
-    let unformatted_go_content = r#"package main
-import "fmt"
-func main(){
-fmt.Println("Hello World")
+    // Create a poorly formatted TypeScript file that needs formatting
+    let unformatted_ts_content = r#"import {Console} from 'console';
+function main(){
+console.log("Hello World")
 }
+main();
 "#;
-    fs::write(&temp_file_path, unformatted_go_content).expect("Failed to write temp Go file");
+    fs::write(&temp_file_path, unformatted_ts_content)
+        .expect("Failed to write temp TypeScript file");
 
     let ipc_path = generate_random_ipc_path();
     let child = setup_neovim_instance_ipc_advance(
@@ -1348,7 +1364,6 @@ fmt.Println("Hello World")
     let original_content = client
         .execute_lua(r#"return table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")"#)
         .await;
-
     assert!(
         original_content.is_ok(),
         "Failed to get original buffer content: {original_content:?}"
@@ -1359,7 +1374,7 @@ fmt.Println("Hello World")
     // Test 1: Get text edits first (without applying)
     let text_edits_result = client
         .lsp_formatting(
-            "gopls",
+            "ts_ls",
             DocumentIdentifier::from_buffer_id(0),
             tab_options.clone(),
         )
@@ -1374,7 +1389,7 @@ fmt.Println("Hello World")
 
     // Test 2: Apply the text edits
     let apply_result = client
-        .lsp_apply_text_edits("gopls", DocumentIdentifier::from_buffer_id(0), text_edits)
+        .lsp_apply_text_edits("ts_ls", DocumentIdentifier::from_buffer_id(0), text_edits)
         .await;
 
     assert!(
@@ -1401,4 +1416,98 @@ fmt.Println("Hello World")
     );
 
     // Temp directory and file automatically cleaned up when temp_dir is dropped
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_lsp_range_formatting_and_apply_edits() {
+    let (_temp_dir, _guard, client) = setup_formatting_test_helper().await;
+
+    use crate::neovim::FormattingOptions;
+    let tab_options = FormattingOptions {
+        tab_size: 4,
+        insert_spaces: false,
+        trim_trailing_whitespace: Some(true),
+        insert_final_newline: Some(true),
+        trim_final_newlines: Some(false),
+        extras: std::collections::HashMap::new(),
+    };
+
+    // First get the text edits for a specific range
+    let range = Range {
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position {
+            line: 5,
+            character: 0,
+        }, // First few lines
+    };
+    let result = client
+        .lsp_range_formatting(
+            "ts_ls",
+            DocumentIdentifier::from_buffer_id(0),
+            range,
+            tab_options,
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "Failed to format range with tabs: {result:?}"
+    );
+    let text_edits = result.unwrap();
+    assert!(
+        !text_edits.is_empty(),
+        "Should have text edits to apply for range formatting"
+    );
+
+    // get the original buffer content
+    let original_content = client
+        .execute_lua(r#"return table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")"#)
+        .await;
+    assert!(
+        original_content.is_ok(),
+        "Failed to get original buffer content: {original_content:?}"
+    );
+    let original = original_content.unwrap().as_str().unwrap().to_string();
+    info!("Original buffer content length: {}", original.len());
+
+    // Apply the text edits
+    let apply_result = client
+        .lsp_apply_text_edits(
+            "ts_ls",
+            DocumentIdentifier::from_buffer_id(0),
+            text_edits.clone(),
+        )
+        .await;
+
+    assert!(
+        apply_result.is_ok(),
+        "Failed to apply text edits from range formatting: {apply_result:?}"
+    );
+    info!(
+        "✅ Successfully applied {} text edits from range formatting using lsp_apply_text_edits",
+        text_edits.len()
+    );
+
+    // Verify the buffer content changed by checking it
+    let new_content = client
+        .execute_lua(r#"return table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")"#)
+        .await;
+
+    assert!(
+        new_content.is_ok(),
+        "Failed to get buffer content after applying range text edits: {new_content:?}"
+    );
+    info!("✅ Buffer content updated after applying range text edits");
+    let new = new_content.unwrap().as_str().unwrap().to_string();
+    info!("New buffer content length: {}", new.len());
+
+    // The content should be different after formatting
+    assert_ne!(
+        original, new,
+        "Buffer content should have changed after applying text edits"
+    );
 }

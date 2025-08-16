@@ -12,6 +12,9 @@ All notable changes to this project will be documented in this file.
 
 ### New Features
 
+- **LSP Document Range Formatting**: Added `lsp_range_formatting` tool for
+  formatting specific ranges in documents using LSP with support for LSP 3.15.0+
+  formatting preferences
 - **LSP Document Formatting**: Added `lsp_formatting` tool for formatting documents
   using LSP with support for LSP 3.15.0+ formatting preferences
 - **LSP Symbol Renaming**: Added `lsp_rename` tool for renaming symbols across
@@ -19,10 +22,13 @@ All notable changes to this project will be documented in this file.
 - **LSP Declaration Support**: Added `lsp_declaration` tool for finding symbol
   declarations with universal document identification
 
-### New Tools (3 additional, 21 total)
+### New Tools (4 additional, 22 total)
 
 **Enhanced LSP Integration:**
 
+- `lsp_range_formatting` - Format a specific range in a document using LSP with
+  support for LSP 3.15.0+ formatting preferences and optional auto-apply
+  (buffer IDs, project paths, absolute paths)
 - `lsp_formatting` - Format document using LSP with support for LSP 3.15.0+
   formatting preferences and optional auto-apply (buffer IDs, project paths,
   absolute paths)
