@@ -8,8 +8,8 @@ use tracing::instrument;
 
 use super::core::{NeovimMcpServer, find_get_all_targets};
 use crate::neovim::{
-    CodeAction, DocumentIdentifier, NeovimClient, NeovimClientTrait, Position, PrepareRenameResult,
-    Range, WorkspaceEdit, string_or_struct,
+    CodeAction, DocumentIdentifier, FormattingOptions, NeovimClient, NeovimClientTrait, Position,
+    PrepareRenameResult, Range, WorkspaceEdit, string_or_struct,
 };
 
 /// Connect to Neovim instance via unix socket or TCP
@@ -254,6 +254,25 @@ pub struct RenameParams {
 
 fn default_prepare_first() -> bool {
     true
+}
+
+/// Document formatting parameters
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct DocumentFormattingParams {
+    /// Unique identifier for the target Neovim instance
+    pub connection_id: String,
+    /// Universal document identifier
+    // Supports both string and struct deserialization.
+    // Compatible with Claude Code when using subscription.
+    #[serde(deserialize_with = "string_or_struct")]
+    pub document: DocumentIdentifier,
+    /// Lsp client name
+    pub lsp_client_name: String,
+    /// The formatting options
+    pub options: FormattingOptions,
+    /// Whether to apply the text edits automatically (default: false)
+    #[serde(default)]
+    pub apply_edits: bool,
 }
 
 #[tool_router]
@@ -713,6 +732,37 @@ impl NeovimMcpServer {
                 "Rename operation is not valid at this position".to_string(),
                 None,
             ))
+        }
+    }
+
+    #[tool(description = "Format entire document using LSP with optional auto-apply")]
+    #[instrument(skip(self))]
+    pub async fn lsp_formatting(
+        &self,
+        Parameters(DocumentFormattingParams {
+            connection_id,
+            document,
+            lsp_client_name,
+            options,
+            apply_edits,
+        }): Parameters<DocumentFormattingParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let client = self.get_connection(&connection_id)?;
+        let text_edits = client
+            .lsp_formatting(&lsp_client_name, document.clone(), options)
+            .await?;
+
+        if apply_edits {
+            // Apply the text edits automatically
+            client
+                .lsp_apply_text_edits(&lsp_client_name, document, text_edits)
+                .await?;
+            Ok(CallToolResult::success(vec![Content::text(
+                "Formatting applied successfully",
+            )]))
+        } else {
+            // Return the text edits for inspection
+            Ok(CallToolResult::success(vec![Content::json(text_edits)?]))
         }
     }
 }

@@ -166,7 +166,7 @@ pub async fn setup_neovim_instance_advance(
     let listen = format!("{HOST}:{port}");
 
     let mut child = StdCommand::new(nvim_path())
-        .args(["-u", cfg_path, "--headless", "--listen", &listen])
+        .args(["-n", "-u", cfg_path, "--headless", "--listen", &listen])
         .args(
             (!open_file.is_empty())
                 .then_some(vec![open_file])
@@ -207,7 +207,7 @@ pub async fn setup_neovim_instance_socket_advance(
     open_file: &str,
 ) -> std::process::Child {
     let mut child = StdCommand::new(nvim_path())
-        .args(["-u", cfg_path, "--headless", "--listen", socket_path])
+        .args(["-n", "-u", cfg_path, "--headless", "--listen", socket_path])
         .args(
             (!open_file.is_empty())
                 .then_some(vec![open_file])
