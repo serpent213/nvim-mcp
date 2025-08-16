@@ -110,6 +110,9 @@
               checkFlags = [
                 "--skip=integration_tests"
               ];
+              preCheck = ''
+                export HOME=$(mktemp -d)
+              '';
             };
         };
         apps = {
