@@ -623,6 +623,121 @@ func main() {
 
 #[tokio::test]
 #[traced_test]
+async fn test_lsp_declaration() {
+    // Create a temporary directory and file
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let temp_file_path = temp_dir.path().join("test_declaration.go");
+
+    // Create a Go file with a function declaration and call
+    let go_content = r#"package main
+
+import "fmt"
+
+func sayHello(name string) string {
+    return "Hello, " + name
+}
+
+func main() {
+    message := sayHello("World")
+    fmt.Println(message)
+}
+"#;
+    fs::write(&temp_file_path, go_content).expect("Failed to write Go file");
+
+    // Setup Neovim with gopls
+    let ipc_path = generate_random_ipc_path();
+    let child = setup_neovim_instance_ipc_advance(
+        &ipc_path,
+        get_testdata_path("cfg_lsp.lua").to_str().unwrap(),
+        temp_file_path.to_str().unwrap(),
+    )
+    .await;
+    let _guard = NeovimIpcGuard::new(child, ipc_path.clone());
+
+    let mut client = NeovimClient::new();
+
+    // Connect to instance
+    let result = client.connect_path(&ipc_path).await;
+    assert!(result.is_ok(), "Failed to connect to instance");
+
+    // Set up diagnostics and wait for LSP
+    let result = client.setup_diagnostics_changed_autocmd().await;
+    assert!(
+        result.is_ok(),
+        "Failed to setup diagnostics autocmd: {result:?}"
+    );
+
+    sleep(Duration::from_secs(15)).await; // Allow time for LSP to initialize
+
+    // Get LSP clients
+    let lsp_clients = client.lsp_get_clients().await.unwrap();
+    info!("LSP clients: {:?}", lsp_clients);
+    assert!(!lsp_clients.is_empty(), "No LSP clients found");
+
+    // Test declaration lookup for sayHello function call on line 10 (0-indexed)
+    // Position cursor on "sayHello" in the function call
+    let result = client
+        .lsp_declaration(
+            "gopls",
+            DocumentIdentifier::from_buffer_id(1), // First opened file
+            Position {
+                line: 10,      // Line with sayHello call (updated for new file format)
+                character: 17, // Position on "sayHello"
+            },
+        )
+        .await;
+
+    assert!(result.is_ok(), "Failed to get declaration: {result:?}");
+    let declaration_result = result.unwrap();
+    info!("Declaration result found: {:?}", declaration_result);
+    assert!(
+        declaration_result.is_some(),
+        "Declaration result should not be empty"
+    );
+
+    let declaration_result = declaration_result.unwrap();
+    // Extract the first location from the declaration result
+    let first_location = match &declaration_result {
+        crate::neovim::client::LocateResult::Single(loc) => loc,
+        crate::neovim::client::LocateResult::Locations(locs) => {
+            assert!(!locs.is_empty(), "No declarations found");
+            &locs[0]
+        }
+        crate::neovim::client::LocateResult::LocationLinks(links) => {
+            assert!(!links.is_empty(), "No declarations found");
+            // For LocationLinks, we create a Location from the target info
+            let link = &links[0];
+            assert!(
+                link.target_uri.contains("test_declaration.go"),
+                "Declaration should point to the same file"
+            );
+            // The declaration should point to line 5 (0-indexed) where the function is declared
+            assert_eq!(
+                link.target_range.start.line, 5,
+                "Declaration should point to line 5 where sayHello function is declared"
+            );
+            info!("✅ LSP declaration lookup successful!");
+            // Temp directory and file automatically cleaned up when temp_dir is dropped
+            return;
+        }
+    };
+
+    // For regular Locations, verify the declaration points to the function declaration
+    assert!(
+        first_location.uri.contains("test_declaration.go"),
+        "Declaration should point to the same file"
+    );
+    assert_eq!(
+        first_location.range.start.line, 5,
+        "Declaration should point to line 5 where sayHello function is declared"
+    );
+
+    info!("✅ LSP declaration lookup successful!");
+    // Temp directory and file automatically cleaned up when temp_dir is dropped
+}
+
+#[tokio::test]
+#[traced_test]
 async fn test_lsp_type_definition() {
     // Create a temporary directory and file
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
