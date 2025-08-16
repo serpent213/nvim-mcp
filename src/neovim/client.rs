@@ -127,6 +127,23 @@ pub trait NeovimClientTrait: Sync {
         client_name: &str,
         workspace_edit: WorkspaceEdit,
     ) -> Result<(), NeovimError>;
+
+    /// Prepare rename operation to validate position and get range/placeholder
+    async fn lsp_prepare_rename(
+        &self,
+        client_name: &str,
+        document: DocumentIdentifier,
+        position: Position,
+    ) -> Result<Option<PrepareRenameResult>, NeovimError>;
+
+    /// Rename symbol across workspace
+    async fn lsp_rename(
+        &self,
+        client_name: &str,
+        document: DocumentIdentifier,
+        position: Position,
+        new_name: &str,
+    ) -> Result<Option<WorkspaceEdit>, NeovimError>;
 }
 
 pub struct NeovimHandler<T> {
@@ -496,6 +513,7 @@ pub struct TextEdit {
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceEdit {
     /// Holds changes to existing resources.
+    #[serde(skip_serializing_if = "Option::is_none")]
     changes: Option<std::collections::HashMap<String, Vec<TextEdit>>>,
 
     /// Depending on the client capability
@@ -511,6 +529,7 @@ pub struct WorkspaceEdit {
     /// If a client neither supports `documentChanges` nor
     /// `workspace.workspaceEdit.resourceOperations` then only plain `TextEdit`s
     /// using the `changes` property are supported.
+    #[serde(skip_serializing_if = "Option::is_none")]
     document_changes: Option<Vec<serde_json::Value>>,
     /// A map of change annotations that can be referenced in
     /// `AnnotatedTextEdit`s or create, rename and delete file / folder
@@ -520,6 +539,7 @@ pub struct WorkspaceEdit {
     /// `workspace.changeAnnotationSupport`.
     ///
     /// @since 3.16.0
+    #[serde(skip_serializing_if = "Option::is_none")]
     change_annotations: Option<HashMap<String, serde_json::Value>>,
 }
 
@@ -943,6 +963,30 @@ pub struct WorkspaceSymbolResult {
     pub result: Option<DocumentSymbolResult>,
     #[serde(flatten)]
     pub unknowns: HashMap<String, serde_json::Value>,
+}
+
+/// Prepare rename response variants
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(untagged)]
+pub enum PrepareRenameResult {
+    Range(Range),
+    RangeWithPlaceholder {
+        range: Range,
+        placeholder: String,
+    },
+    DefaultBehavior {
+        #[serde(rename = "defaultBehavior")]
+        default_behavior: bool,
+    },
+}
+
+/// Rename request parameters for LSP
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameRequestParams {
+    pub text_document: TextDocumentIdentifier,
+    pub position: Position,
+    pub new_name: String,
 }
 
 pub struct NeovimClient<T>
@@ -1950,6 +1994,122 @@ where
                 Err(NeovimError::Api(format!(
                     "Failed to apply LSP workspace edit: {e}"
                 )))
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn lsp_prepare_rename(
+        &self,
+        client_name: &str,
+        document: DocumentIdentifier,
+        position: Position,
+    ) -> Result<Option<PrepareRenameResult>, NeovimError> {
+        let text_document = self.resolve_text_document_identifier(&document).await?;
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        let buffer_id = match &document {
+            DocumentIdentifier::BufferId(id) => *id,
+            _ => 0,
+        };
+
+        match conn
+            .nvim
+            .execute_lua(
+                include_str!("lua/lsp_prepare_rename.lua"),
+                vec![
+                    Value::from(client_name),
+                    Value::from(
+                        serde_json::to_string(&TextDocumentPositionParams {
+                            text_document,
+                            position,
+                        })
+                        .unwrap(),
+                    ),
+                    Value::from(1000),
+                    Value::from(buffer_id),
+                ],
+            )
+            .await
+        {
+            Ok(result) => {
+                match serde_json::from_str::<NvimExecuteLuaResult<Option<PrepareRenameResult>>>(
+                    result.as_str().unwrap(),
+                ) {
+                    Ok(d) => d.into(),
+                    Err(e) => {
+                        debug!("Failed to parse prepare rename result: {e}");
+                        Err(NeovimError::Api(format!(
+                            "Failed to parse prepare rename result: {e}"
+                        )))
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Failed to prepare rename: {}", e);
+                Err(NeovimError::Api(format!("Failed to prepare rename: {e}")))
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn lsp_rename(
+        &self,
+        client_name: &str,
+        document: DocumentIdentifier,
+        position: Position,
+        new_name: &str,
+    ) -> Result<Option<WorkspaceEdit>, NeovimError> {
+        let text_document = self.resolve_text_document_identifier(&document).await?;
+
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            NeovimError::Connection("Not connected to any Neovim instance".to_string())
+        })?;
+
+        let buffer_id = match &document {
+            DocumentIdentifier::BufferId(id) => *id,
+            _ => 0,
+        };
+
+        match conn
+            .nvim
+            .execute_lua(
+                include_str!("lua/lsp_rename.lua"),
+                vec![
+                    Value::from(client_name),
+                    Value::from(
+                        serde_json::to_string(&RenameRequestParams {
+                            text_document,
+                            position,
+                            new_name: new_name.to_string(),
+                        })
+                        .unwrap(),
+                    ),
+                    Value::from(5000), // Longer timeout for rename operations
+                    Value::from(buffer_id),
+                ],
+            )
+            .await
+        {
+            Ok(result) => {
+                match serde_json::from_str::<NvimExecuteLuaResult<Option<WorkspaceEdit>>>(
+                    result.as_str().unwrap(),
+                ) {
+                    Ok(d) => d.into(),
+                    Err(e) => {
+                        debug!("Failed to parse rename result: {e}");
+                        Err(NeovimError::Api(format!(
+                            "Failed to parse rename result: {e}"
+                        )))
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Failed to rename: {}", e);
+                Err(NeovimError::Api(format!("Failed to rename: {e}")))
             }
         }
     }

@@ -8,8 +8,8 @@ use tracing::instrument;
 
 use super::core::{NeovimMcpServer, find_get_all_targets};
 use crate::neovim::{
-    CodeAction, DocumentIdentifier, NeovimClient, NeovimClientTrait, Position, Range,
-    WorkspaceEdit, string_or_struct,
+    CodeAction, DocumentIdentifier, NeovimClient, NeovimClientTrait, Position, PrepareRenameResult,
+    Range, WorkspaceEdit, string_or_struct,
 };
 
 /// Connect to Neovim instance via unix socket or TCP
@@ -227,6 +227,33 @@ pub struct ApplyWorkspaceEditParams {
     // Compatible with Claude Code when using subscription.
     #[serde(deserialize_with = "string_or_struct")]
     pub workspace_edit: WorkspaceEdit,
+}
+
+/// Rename parameters
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RenameParams {
+    /// Unique identifier for the target Neovim instance
+    pub connection_id: String,
+    /// Universal document identifier
+    // Supports both string and struct deserialization.
+    // Compatible with Claude Code when using subscription.
+    #[serde(deserialize_with = "string_or_struct")]
+    pub document: DocumentIdentifier,
+    /// Lsp client name
+    pub lsp_client_name: String,
+    /// Symbol position, line number starts from 0
+    pub line: u64,
+    /// Symbol position, character number starts from 0
+    pub character: u64,
+    /// The new name of the symbol
+    pub new_name: String,
+    /// Whether to run prepare rename first to validate the position (default: true)
+    #[serde(default = "default_prepare_first")]
+    pub prepare_first: bool,
+}
+
+fn default_prepare_first() -> bool {
+    true
 }
 
 #[tool_router]
@@ -613,6 +640,80 @@ impl NeovimMcpServer {
             .lsp_apply_workspace_edit(&lsp_client_name, workspace_edit)
             .await?;
         Ok(CallToolResult::success(vec![Content::text("success")]))
+    }
+
+    #[tool(description = "Rename symbol across workspace using LSP with optional validation")]
+    #[instrument(skip(self))]
+    pub async fn lsp_rename(
+        &self,
+        Parameters(RenameParams {
+            connection_id,
+            document,
+            lsp_client_name,
+            line,
+            character,
+            new_name,
+            prepare_first,
+        }): Parameters<RenameParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let client = self.get_connection(&connection_id)?;
+        let position = Position { line, character };
+
+        // Optionally run prepare rename first to validate the position
+        if prepare_first {
+            match client
+                .lsp_prepare_rename(&lsp_client_name, document.clone(), position.clone())
+                .await
+            {
+                Ok(Some(prepare_result)) => {
+                    // Prepare rename was successful, we can proceed
+                    let prepare_info = match prepare_result {
+                        PrepareRenameResult::Range(range) => {
+                            format!("Range: {:?}", range)
+                        }
+                        PrepareRenameResult::RangeWithPlaceholder { range, placeholder } => {
+                            format!("Range: {:?}, Current name: '{}'", range, placeholder)
+                        }
+                        PrepareRenameResult::DefaultBehavior { .. } => {
+                            "Default behavior enabled".to_string()
+                        }
+                    };
+                    tracing::debug!("Prepare rename successful: {}", prepare_info);
+                }
+                Ok(None) => {
+                    return Err(McpError::invalid_request(
+                        "Position is not renameable according to prepare rename".to_string(),
+                        None,
+                    ));
+                }
+                Err(e) => {
+                    return Err(McpError::invalid_request(
+                        format!("Prepare rename failed: {}", e),
+                        None,
+                    ));
+                }
+            }
+        }
+
+        // Proceed with the actual rename
+        let workspace_edit = client
+            .lsp_rename(&lsp_client_name, document, position, &new_name)
+            .await?;
+
+        if let Some(edit) = workspace_edit {
+            // Apply the workspace edit automatically
+            client
+                .lsp_apply_workspace_edit(&lsp_client_name, edit)
+                .await?;
+            Ok(CallToolResult::success(vec![Content::text(
+                "Rename completed successfully",
+            )]))
+        } else {
+            Err(McpError::invalid_request(
+                "Rename operation is not valid at this position".to_string(),
+                None,
+            ))
+        }
     }
 }
 

@@ -121,7 +121,7 @@ Once both the MCP server and Neovim are running, here's a typical workflow:
 
 ## Available Tools
 
-The server provides 19 MCP tools for interacting with Neovim:
+The server provides 20 MCP tools for interacting with Neovim:
 
 ### Connection Management
 
@@ -216,6 +216,13 @@ establishment phase:
     (all positions are 0-indexed)
   - Returns: Declaration result supporting Location arrays, LocationLink arrays,
     or null responses
+
+- **`lsp_rename`**: Rename symbol across workspace using LSP
+  - Parameters: `connection_id` (string), `document` (DocumentIdentifier),
+    `lsp_client_name` (string), `line` (number), `character` (number),
+    `new_name` (string), `prepare_first` (boolean, optional)
+    (all positions are 0-indexed)
+  - Returns: WorkspaceEdit with file changes or validation errors
 
 ### Universal Document Identifier
 

@@ -12,13 +12,17 @@ All notable changes to this project will be documented in this file.
 
 ### New Features
 
+- **LSP Symbol Renaming**: Added `lsp_rename` tool for renaming symbols across
+  workspace with optional prepare rename validation
 - **LSP Declaration Support**: Added `lsp_declaration` tool for finding symbol
   declarations with universal document identification
 
-### New Tools (1 additional, 19 total)
+### New Tools (2 additional, 20 total)
 
 **Enhanced LSP Integration:**
 
+- `lsp_rename` - Rename symbol across workspace using LSP with optional
+  validation via prepare rename (buffer IDs, project paths, absolute paths)
 - `lsp_declaration` - Get LSP declaration with universal document identification
   (buffer IDs, project paths, absolute paths)
 
