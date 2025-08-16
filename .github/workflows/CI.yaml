@@ -2,10 +2,6 @@ name: "CI"
 on:
   pull_request:
   push:
-    branches: ["main"]
-  schedule:
-    # Run every Friday at 00:00 UTC
-    - cron: "0 0 * * 5"
 jobs:
   CI:
     runs-on: ubuntu-latest
