@@ -10,6 +10,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v0.4.0] - 2025-08-16
+
 ### New Features
 
 - **LSP Import Organization**: Added `lsp_organize_imports` tool for sorting and
